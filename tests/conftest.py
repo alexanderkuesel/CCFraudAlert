@@ -17,15 +17,12 @@ def db(tmp_path):
     """Fresh database per test. Uses FRAUDALERT_TEST_DATABASE_URL (e.g. Postgres) if set."""
     from fraudalert import db as dbmod
     from fraudalert.config import get_settings
-    from fraudalert.pipeline import seed_default_rules
 
     get_settings.cache_clear()
     url = os.environ.get("FRAUDALERT_TEST_DATABASE_URL") or f"sqlite:///{tmp_path / 'test.db'}"
     dbmod.configure(url)
     dbmod.Base.metadata.drop_all(dbmod.get_engine())
     dbmod.init_db()
-    with dbmod.session_scope() as s:
-        seed_default_rules(s)
     yield dbmod
     dbmod.Base.metadata.drop_all(dbmod.get_engine())
 

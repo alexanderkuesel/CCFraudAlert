@@ -7,8 +7,11 @@ services:
       POSTGRES_DB: fraudalert
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # Published only so you can reach the DB from the host (psql, running the CLI locally).
+    # The web and worker containers talk to it over the compose network on db:5432.
+    # Defaults to 5433 to avoid clashing with a Postgres already running on the host.
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${FRAUDALERT_DB_HOST_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U fraudalert"]
       interval: 5s
@@ -20,10 +23,11 @@ services:
     environment:
       FRAUDALERT_DATABASE_URL: postgresql+psycopg://fraudalert:fraudalert@db:5432/fraudalert
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${FRAUDALERT_WEB_HOST_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
+    restart: unless-stopped
 
   worker:
     build: .

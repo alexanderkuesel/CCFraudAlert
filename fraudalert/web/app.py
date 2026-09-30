@@ -42,8 +42,6 @@ def require_auth(creds: HTTPBasicCredentials | None = Depends(_basic)) -> None:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     init_db()
-    with session_scope() as s:
-        pipeline.seed_default_rules(s)
     yield
 
 
