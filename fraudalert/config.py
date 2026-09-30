@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     test_amount_max: float = 1.0
     test_followup_hours: int = 48
     timezone: str = "America/New_York"  # your local time: email dates, hour-of-day rules and features
-    detector: str = "baseline"
+    detector: str = "iforest"  # "iforest" (falls back to "baseline" until trained) or "baseline"
     notify_webhook_url: str = ""
 
     web_bind: str = "127.0.0.1"  # host interface docker compose publishes the UI on

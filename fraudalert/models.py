@@ -8,6 +8,8 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -112,3 +114,18 @@ class SyncState(Base):
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class AnomalyModel(Base):
+    """A trained anomaly model (e.g. an Isolation Forest). Stored in the database so the web and
+    worker containers share it and it survives restarts. Only the newest few are kept."""
+
+    __tablename__ = "anomaly_models"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32), index=True)  # "iforest"
+    trained_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    n_samples: Mapped[int] = mapped_column(Integer)
+    feature_version: Mapped[int] = mapped_column(Integer)
+    blob: Mapped[bytes] = mapped_column(LargeBinary)  # pickled model + reference score distribution
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict)

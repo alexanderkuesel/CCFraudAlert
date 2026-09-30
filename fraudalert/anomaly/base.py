@@ -38,8 +38,8 @@ def register(key: str):
     return deco
 
 
-def get_detector(key: str = "baseline") -> AnomalyDetector:
-    from fraudalert.anomaly import baseline  # noqa: F401  (registers built-ins)
+def get_detector(key: str = "iforest") -> AnomalyDetector:
+    from fraudalert.anomaly import baseline, iforest  # noqa: F401  (registers built-ins)
 
     try:
         return DETECTORS[key]()

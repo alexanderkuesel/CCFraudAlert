@@ -180,27 +180,36 @@ priority (`[HIGH] Transaction alarm: ...`). The payload has `text` (Slack/Matter
 `priority`, and structured `transaction` fields. Transactions older
 than 2 days are not sent, so a historical backfill won't flood you.
 
-## Anomaly detection: the road to a neural net
+## Anomaly detection
 
-Everything a model needs is already collected:
+Every transaction gets an **anomaly score** from 0 to 1 (the *Anom.* column). Rules can use it, and a
+built-in **Low**-priority alarm, *Unusual pattern (anomaly model)*, fires at `anomaly_score >= 0.97`.
 
-* **Features.** `fraudalert/anomaly/features.py` turns each transaction plus its history into a fixed
-  vector (`FEATURE_NAMES`): log amount, foreign flag, cyclical hour and weekday, how often you've used
-  the merchant, robust z-scores against the merchant's history and your overall history, time since
-  the previous transaction, and the count in the last 24h. Each transaction is stored with the exact
-  vector it was scored on.
-* **Labels.** In the UI you can mark any transaction ✓ legit or ✗ fraud (`transactions.label_fraud`).
-* **Training data.** `fraudalert export-features data.csv` writes the feature vectors, scores and labels.
-* **Pluggable detector.** `fraudalert/anomaly/base.py` defines `AnomalyDetector` (`fit(rows)` and
-  `score(features) -> 0..1`). Register an implementation and choose it with `FRAUDALERT_DETECTOR`.
-  Scores go into `anomaly_score`, so rules like `anomaly_score >= 0.8` work with any model and the
-  pipeline doesn't change.
+**Isolation Forest (default, `FRAUDALERT_DETECTOR=iforest`).** An unsupervised model
+(scikit-learn) that learns what *your* normal spending looks like, and isolates transactions that
+don't fit. The score is a percentile, so **0.97** means more unusual than 97% of your history.
 
-The shipped `baseline` detector is a transparent heuristic (unusual amount for that merchant, a large
-amount at a new merchant, foreign currency, a new merchant, bursts of transactions, 0–5am activity). It
-works from the first day and gives a future model something to beat. A natural next step is an
-autoencoder (or an Isolation Forest to start) trained on transactions labelled legit, with the score
-taken from the reconstruction error. Once you have enough ✗ fraud labels, a supervised classifier.
+* **Training data:** every stored transaction except those you acknowledged as fraud, using the
+  features in `fraudalert/anomaly/features.py` (amount vs. that merchant and vs. all spending, time
+  of day, weekday, how often you use the merchant, time since the previous transaction, bursts,
+  foreign).
+* **When it trains:** needs **50** transactions. Until then scores come from the statistical
+  baseline, and the *Anom.* source is recorded per transaction (`anomaly_model`). The worker
+  retrains it **nightly** when new transactions have arrived; you can also run
+  `fraudalert train` or click **Retrain now** on **Settings**. Training re-scores your whole history.
+* **Storage:** the model is stored in Postgres (`anomaly_models`, newest 5 kept), so web and worker
+  share it.
+* **Sanity check:** **Settings** shows how well it separates what you acknowledged as fraud from
+  legit (AUC), next to the baseline, and how many alarms it would raise per 30 days. Legit rows
+  are also training data, so this is a sanity check rather than a benchmark.
+
+**Baseline (`FRAUDALERT_DETECTOR=baseline`).** A transparent heuristic: an unusual amount for the
+merchant, a large amount at a new merchant, foreign, a new merchant, bursts, and 0–5am.
+
+**Next steps.** Your **Ack · Legit / Ack · Fraud** clicks are stored as labels, and `fraudalert
+export-features data.csv` exports features + labels. Once there's plenty of history, an autoencoder
+(trained on legit transactions) or, with enough confirmed fraud, a supervised classifier can be
+added. `fraudalert/anomaly/base.py` shows the small interface a new model implements.
 
 ## Parsing emails
 

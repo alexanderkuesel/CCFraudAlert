@@ -28,7 +28,8 @@ def test_pages_and_rule_crud(db, tmp_path):
 
     api = client.get("/api/rules").json()
     assert [x["name"] for x in api] == [
-        "Large or foreign purchase", "Card test (zero/near-zero amount)", "Charge after a card test", "Hotels"]
+        "Large or foreign purchase", "Card test (zero/near-zero amount)", "Charge after a card test",
+        "Unusual pattern (anomaly model)", "Hotels"]
     r = client.post("/api/rules", json={"name": "Night", "conditions": [{"field": "hour", "op": "lt", "value": 5}]})
     assert r.status_code == 201
     assert client.post("/api/rules", json={"name": "x", "conditions": []}).status_code == 422
