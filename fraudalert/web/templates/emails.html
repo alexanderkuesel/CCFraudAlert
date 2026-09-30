@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Emails · Fraud Alert{% endblock %}
+{% block content %}
+<div class="toolbar">
+  <a href="/emails?status=failed">Unparsed</a> · <a href="/emails?status=parsed">Parsed</a>
+  <form class="inline" method="post" action="/emails/reparse" style="margin-left:auto"><button>Retry parsing unparsed emails</button></form>
+</div>
+<p class="muted">Emails that matched your sender filter but could not be turned into a transaction. If a real transaction shows up here, the parser needs a tweak (see <code>fraudalert/ingest/parsers.py</code>).</p>
+{% for e in rows %}
+  <div class="card">
+    <b>{{ e.subject }}</b> <span class="muted">— {{ e.sender }} · {{ e.received_at | local }}</span>
+    {% if e.parse_error %}<div class="alert-reason">{{ e.parse_error }}</div>{% endif %}
+    <details><summary class="muted">body</summary><pre>{{ e.body }}</pre></details>
+  </div>
+{% else %}
+  <p class="muted">Nothing here.</p>
+{% endfor %}
+{% endblock %}
