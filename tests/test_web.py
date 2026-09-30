@@ -16,7 +16,7 @@ def test_pages_and_rule_crud(db, tmp_path):
 
     r = client.get("/")
     assert r.status_code == 200 and "HOTEL NOVA" in r.text and "Large or foreign purchase" in r.text
-    assert client.get("/?flagged=true").text.count("HOTEL NOVA") == 1
+    assert client.get("/?flagged=true").text.count('aria-label="Select HOTEL NOVA"') == 1  # one row
     assert client.get("/rules").status_code == 200
     assert client.get("/emails").status_code == 200
 

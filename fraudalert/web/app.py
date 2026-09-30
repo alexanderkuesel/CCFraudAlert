@@ -11,13 +11,14 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from fraudalert import pipeline, prefs
 from fraudalert.config import get_settings
 from fraudalert.db import init_db, session_scope
 from fraudalert.models import Alert, RawEmail, Rule, SyncState, Transaction
+from fraudalert.web.filters import PRIORITIES, PRIORITY_RANK, STATES, VIEWS, Filters, txn_priority
 from fraudalert.rules.engine import FIELDS, OPS, RuleError, RuleSpec, describe, validate_rule
 
 HERE = Path(__file__).parent
@@ -50,17 +51,35 @@ async def _lifespan(app: FastAPI):
 
 # ---- ISA-18.2 alarm vocabulary --------------------------------------------------------------
 # Rules store severity as low/medium/high; the UI shows it as alarm priority P1-P3.
-PRIORITY_RANK = {"high": 1, "medium": 2, "low": 3}
 PRIORITY_NAME = {1: "High", 2: "Medium", 3: "Low"}
 # ISA-18.2 guidance for a healthy system: roughly 5% high, 15% medium, 80% low priority alarms.
 PRIORITY_TARGET = {1: 5, 2: 15, 3: 80}
-VIEWS = {"unack": "Unacknowledged", "alarms": "All alarms", "journal": "Journal"}
 
 
-def txn_priority(t: Transaction) -> int | None:
-    """Highest (numerically lowest) priority among a transaction's alarms."""
-    ranks = [PRIORITY_RANK.get(a.severity, 3) for a in t.alerts]
-    return min(ranks) if ranks else None
+BULK_ACTIONS = {
+    "legit": "Acknowledged {n} transaction{s} as legit.",
+    "fraud": "Acknowledged {n} transaction{s} as fraud.",
+    "clear": "Cleared the acknowledgement on {n} transaction{s}.",
+    "comment": "Updated the comment on {n} transaction{s}.",
+}
+
+
+def apply_bulk(s, ids: list[int], action: str, comment: str = "") -> int:
+    """Returns how many transactions were changed."""
+    if not ids:
+        return 0
+    rows = s.scalars(select(Transaction).where(Transaction.id.in_(ids))).all()
+    text = comment.strip()[:COMMENT_MAX] or None
+    for t in rows:
+        if action == "legit":
+            t.label_fraud = False
+        elif action == "fraud":
+            t.label_fraud = True
+        elif action == "clear":
+            t.label_fraud = None
+        elif action == "comment":
+            t.comment = text
+    return len(rows)
 
 
 def unack_by_priority(s) -> dict[int, int]:
@@ -132,39 +151,22 @@ def create_app(init: bool = True) -> FastAPI:
 
     def redirect(path: str, msg: str | None = None, error: str | None = None) -> RedirectResponse:
         q = {k: v for k, v in {"msg": msg, "error": error}.items() if v}
-        return RedirectResponse(path + (("?" + urlencode(q)) if q else ""), status_code=303)
+        sep = "&" if "?" in path else "?"
+        return RedirectResponse(path + ((sep + urlencode(q)) if q else ""), status_code=303)
 
     # ---------- HTML ----------
 
     @app.get("/")
-    def alarm_summary(request: Request, view: str = "unack", q: str = "", page: int = 1, flagged: bool = False):
-        """ISA-18.2-style alarm summary. Views: unack (default), alarms (incl. acknowledged), journal (all)."""
-        if flagged:  # old links
-            view = "alarms"
-        view = view if view in VIEWS else "unack"
+    def alarm_summary(request: Request, page: int = 1):
+        """ISA-18.2-style alarm summary: view tabs (unack / alarms / journal) refined by filters."""
+        f = Filters.from_params(request.query_params)
         page = max(page, 1)
+        settings = get_settings()
         with session_scope() as s:
-            stmt = select(Transaction).options(selectinload(Transaction.alerts).selectinload(Alert.rule))
-            if view == "unack":
-                stmt = stmt.where(Transaction.flagged.is_(True), Transaction.label_fraud.is_(None))
-            elif view == "alarms":
-                stmt = stmt.where(Transaction.flagged.is_(True))
-            if q:
-                like = f"%{q}%"
-                stmt = stmt.where(or_(Transaction.merchant.ilike(like), Transaction.currency.ilike(like)))
-            if view == "journal":
-                total = s.scalar(select(func.count()).select_from(stmt.subquery()))
-                rows = s.scalars(
-                    stmt.order_by(Transaction.occurred_at.desc()).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
-                ).all()
-            else:
-                # Alarm lists: unacknowledged first, then priority, then newest (per-user volumes are small).
-                everything = sorted(
-                    s.scalars(stmt).all(),
-                    key=lambda t: (t.label_fraud is not None, txn_priority(t) or 9, -t.occurred_at.timestamp()),
-                )
-                total = len(everything)
-                rows = everything[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
+            env = pipeline.Env.load(s, settings)
+            matches = f.apply(s, env)
+            total = len(matches)
+            rows = matches[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
             counts = {
                 "unack": s.scalar(select(func.count(Transaction.id)).where(
                     Transaction.flagged.is_(True), Transaction.label_fraud.is_(None))),
@@ -172,20 +174,44 @@ def create_app(init: bool = True) -> FastAPI:
                 "journal": s.scalar(select(func.count(Transaction.id))),
                 "unparsed": s.scalar(select(func.count(RawEmail.id)).where(RawEmail.parse_status == "failed")),
             }
+            rule_names = dict(s.execute(select(Rule.id, Rule.name).order_by(Rule.id)).all())
+            cards = sorted(c for c in s.scalars(select(Transaction.card_last4).distinct()) if c)
             last_sync = s.get(SyncState, "last_imap_sync")
-            normal = set(prefs.normal_currencies(s, get_settings()))
             kpi = alarm_kpis(s)
         return templates.TemplateResponse(
             request,
             "transactions.html",
             {
-                "rows": rows, "view": view, "q": q, "page": page, "total": total, "counts": counts,
+                "rows": rows, "f": f, "view": f.view, "page": page, "total": total, "counts": counts,
                 "pages": max(1, -(-total // PAGE_SIZE)), "kpi": kpi,
+                "chips": f.chips(rule_names, env.home_currency), "rule_names": rule_names, "cards": cards,
+                "currency": env.home_currency, "PRIORITIES": PRIORITIES, "STATES": STATES,
                 "last_sync": _local(datetime.fromisoformat(last_sync.value)) if last_sync else None,
-                "tz": get_settings().timezone,
-                "normal": normal,
+                "tz": settings.timezone,
+                "normal": env.normal_currencies,
+                "is_foreign": env.is_foreign,
             },
         )
+
+    @app.post("/transactions/bulk")
+    async def bulk_edit(request: Request):
+        """Apply one action to the selected rows, or to every row matching the page's filters."""
+        form = await request.form()
+        qs = str(form.get("filters", ""))
+        back = "/?" + qs if qs else "/"
+        action = str(form.get("action", ""))
+        if action not in BULK_ACTIONS:
+            return redirect(back, error="choose a bulk action")
+        with session_scope() as s:
+            if form.get("all_matching") == "1":
+                f = Filters.from_query_string(qs)
+                ids = [t.id for t in f.apply(s, pipeline.Env.load(s, get_settings()))]
+            else:
+                ids = [int(i) for i in form.getlist("ids") if str(i).isdigit()]
+            n = apply_bulk(s, ids, action, str(form.get("comment", "")))
+        if not n:
+            return redirect(back, error="nothing selected")
+        return redirect(back, msg=BULK_ACTIONS[action].format(n=n, s="" if n == 1 else "s"))
 
     @app.post("/transactions/{txn_id}/label")
     async def label_transaction(txn_id: int, request: Request):
@@ -381,6 +407,18 @@ def create_app(init: bool = True) -> FastAPI:
                 stmt.order_by(Transaction.occurred_at.desc()).offset(offset).limit(min(limit, 1000))
             ).all()
             return [_txn_json(t) for t in rows]
+
+    class BulkIn(BaseModel):
+        ids: list[int]
+        action: str
+        comment: str = ""
+
+    @app.post("/api/transactions/bulk")
+    def api_bulk(body: BulkIn):
+        if body.action not in BULK_ACTIONS:
+            raise HTTPException(422, f"action must be one of {sorted(BULK_ACTIONS)}")
+        with session_scope() as s:
+            return {"updated": apply_bulk(s, body.ids, body.action, body.comment)}
 
     @app.get("/api/rules")
     def api_rules():
