@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Network{% endblock %}
+{% block content %}
+<div class="net">
+  <div class="toolbar net-filters">
+    <div class="seg" role="group" aria-label="Date range">
+      {% for value, label in [("30", "30 days"), ("90", "90 days"), ("365", "1 year"), ("all", "All")] %}
+        <button type="button" data-days="{{ value }}" aria-pressed="{{ 'true' if value == days else 'false' }}">{{ label }}</button>
+      {% endfor %}
+    </div>
+    <label class="switch"><input type="checkbox" id="only-anomalies"> Highlight anomalies</label>
+    <span class="muted" id="net-summary" aria-live="polite"></span>
+  </div>
+
+  <ul class="net-legend" aria-label="Legend">
+    <li><span class="key-node st-p1" aria-hidden="true">1</span>Unack · High</li>
+    <li><span class="key-node st-p2" aria-hidden="true">2</span>Unack · Medium</li>
+    <li><span class="key-node st-p3" aria-hidden="true">3</span>Unack · Low</li>
+    <li><span class="key-node st-fraud" aria-hidden="true">✕</span>Fraud (acknowledged)</li>
+    <li><span class="key-node st-legit" aria-hidden="true">✓</span>Acknowledged legit</li>
+    <li><span class="key-node st-normal" aria-hidden="true"></span>Normal</li>
+    <li><span class="key-ring ring-new" aria-hidden="true"></span>New merchant (first purchase in the last {{ new_days }} days)</li>
+    <li><span class="key-ring ring-foreign" aria-hidden="true"></span>Foreign</li>
+    <li><span class="key-card" aria-hidden="true"></span>Card · <span class="muted">circle size = total spend</span></li>
+  </ul>
+
+  <div class="net-body">
+    <div class="net-canvas" id="net-canvas">
+      <svg id="net-svg" role="img" aria-labelledby="net-svg-title">
+        <title id="net-svg-title">Network of your cards and the merchants they were used at</title>
+      </svg>
+      <div class="net-tooltip" id="net-tooltip" hidden></div>
+      <p class="net-empty muted" id="net-empty" hidden>No transactions in this range.</p>
+    </div>
+    <aside class="net-detail card" id="net-detail">
+      <p class="muted" style="margin:0">Hover a node to see its connections. Click (or Tab + Enter) to pin its details here.</p>
+    </aside>
+  </div>
+
+  <h3>Merchants</h3>
+  <div class="table-wrap">
+    <table id="net-table">
+      <thead><tr><th>Status</th><th>Merchant</th><th style="text-align:right">Transactions</th>
+        <th style="text-align:right">Total</th><th style="text-align:right">Cards</th><th>First purchase</th>
+        <th>Signals</th><th style="text-align:right">Max anomaly</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+<script src="{{ url_for('static', path='network.js') }}"></script>
+{% endblock %}

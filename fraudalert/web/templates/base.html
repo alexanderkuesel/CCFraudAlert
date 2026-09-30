@@ -16,6 +16,7 @@
   </div>
   <nav>
     <a href="/" class="{{ 'active' if p == '/' }}">Alarm summary</a>
+    <a href="/network" class="{{ 'active' if p.startswith('/network') }}">Network</a>
     <a href="/rules" class="{{ 'active' if p.startswith('/rules') }}">Alarm rules</a>
     <a href="/emails" class="{{ 'active' if p.startswith('/emails') }}">Emails</a>
     <a href="/settings" class="{{ 'active' if p.startswith('/settings') }}">Settings</a>
