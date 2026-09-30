@@ -60,11 +60,14 @@ class Env:
     home_currency: str
     home_countries: set[str]
     normal_currencies: frozenset[str]
+    test_amount_max: float
+    test_followup: timedelta
 
     @classmethod
     def load(cls, session: Session, settings: Settings) -> "Env":
         normal = frozenset(prefs.normal_currencies(session, settings))
-        key = (settings.timezone, settings.home_currency, settings.fx_rates, settings.home_country, normal)
+        key = (settings.timezone, settings.home_currency, settings.fx_rates, settings.home_country, normal,
+               settings.test_amount_max, settings.test_followup_hours)
         if key not in _ENV_CACHE:
             _ENV_CACHE[key] = cls(
                 tz=ZoneInfo(settings.timezone),
@@ -72,6 +75,8 @@ class Env:
                 home_currency=settings.home_currency.upper(),
                 home_countries={_fold(c) for c in settings.home_country.split(",") if c.strip()},
                 normal_currencies=normal,
+                test_amount_max=settings.test_amount_max,
+                test_followup=timedelta(hours=settings.test_followup_hours),
             )
         return _ENV_CACHE[key]
 
@@ -90,6 +95,9 @@ class Env:
     def is_foreign(self, txn: Transaction) -> bool:
         return bool(txn.is_foreign) or self.unusual_currency(txn)
 
+    def is_test_amount(self, txn: Transaction) -> bool:
+        return self.fx.to_home(float(txn.amount), txn.currency) <= self.test_amount_max
+
     def localize(self, dt: datetime) -> datetime:
         """Dates written in an email without a timezone are the user's local time."""
         return dt.replace(tzinfo=self.tz) if dt.tzinfo is None else dt
@@ -104,7 +112,23 @@ def _view(txn: Transaction, env: Env) -> TxnView:
     )
 
 
-def transaction_context(txn: Transaction, env: Env) -> dict:
+def follows_card_test(session: Session, txn: Transaction, env: Env) -> bool:
+    """A real charge shortly after a test-sized one on the same card: the classic "verify the stolen
+    card with $0, then spend" pattern."""
+    if not txn.card_last4 or env.is_test_amount(txn):
+        return False
+    start = txn.occurred_at - env.test_followup
+    q = select(Transaction).where(
+        Transaction.card_last4 == txn.card_last4,
+        Transaction.occurred_at >= start,
+        Transaction.occurred_at <= txn.occurred_at,
+    )
+    if txn.id is not None:
+        q = q.where(Transaction.id != txn.id)
+    return any(env.is_test_amount(t) for t in session.scalars(q))
+
+
+def transaction_context(txn: Transaction, env: Env, follows_test: bool = False) -> dict:
     """The dict rules are evaluated against (keys = rules.engine.FIELDS)."""
     local = _as_utc(txn.occurred_at).astimezone(env.tz)
     return {
@@ -115,6 +139,8 @@ def transaction_context(txn: Transaction, env: Env) -> dict:
         "card_last4": txn.card_last4,
         "is_foreign": env.is_foreign(txn),
         "unusual_currency": env.unusual_currency(txn),
+        "is_test_amount": env.is_test_amount(txn),
+        "follows_test": follows_test,
         "hour": local.hour,
         "weekday": local.weekday(),
         "anomaly_score": txn.anomaly_score,
@@ -141,7 +167,7 @@ def apply_rules(session: Session, txn: Transaction, rules: list[RuleSpec], env: 
     """Replace this transaction's rule alerts with a fresh evaluation. Returns the new alerts."""
     for stale in [a for a in txn.alerts if a.rule_id is not None]:
         txn.alerts.remove(stale)  # delete-orphan cascade removes the row
-    ctx = transaction_context(txn, env)
+    ctx = transaction_context(txn, env, follows_card_test(session, txn, env))
     new = []
     for rule in rules:
         if evaluate(rule, ctx):
@@ -333,21 +359,60 @@ def reevaluate_all(settings: Settings | None = None, reparse: str = "none") -> S
     return result
 
 
+# Built-in rules, keyed so new ones reach existing installs once (see seed_default_rules).
+# Priorities follow ISA-18.2 practice: High is reserved for situations needing prompt action.
 DEFAULT_RULES = [
     {
+        "key": "large_or_foreign",
         "name": "Large or foreign purchase",
-        "description": "Any purchase over 100 or charged in a non-home currency.",
+        "description": "Any purchase over 100 (home currency) or made abroad / in an unusual currency.",
         "match": "any",
         "conditions": [
             {"field": "amount", "op": "gt", "value": 100.0},
             {"field": "is_foreign", "op": "eq", "value": True},
         ],
+        "severity": "medium",
+    },
+    {
+        "key": "card_test",
+        "name": "Card test (zero/near-zero amount)",
+        "description": "A $0.00-style authorisation: fraudsters verify a stolen card this way before spending.",
+        "match": "all",
+        "conditions": [{"field": "is_test_amount", "op": "eq", "value": True}],
+        "severity": "high",
+    },
+    {
+        "key": "after_card_test",
+        "name": "Charge after a card test",
+        "description": "A real charge on a card that had a test-sized authorisation shortly before.",
+        "match": "all",
+        "conditions": [{"field": "follows_test", "op": "eq", "value": True}],
         "severity": "high",
     },
 ]
+_SEEDED = "seeded_rules"
 
 
-def seed_default_rules(session: Session) -> None:
-    if session.scalar(select(Rule.id).limit(1)) is None:
-        for r in DEFAULT_RULES:
-            session.add(Rule(**r))
+def seed_default_rules(session: Session) -> int:
+    """Add built-in rules this database hasn't had yet. Returns how many were added.
+
+    A rule is only ever seeded once, so deleting a built-in rule sticks. A rule that already exists
+    under the same name (e.g. from before seeding was tracked) counts as seeded.
+    """
+    state = session.get(SyncState, _SEEDED)
+    seeded = set(state.value.split(",")) if state and state.value else set()
+    names = set(session.scalars(select(Rule.name)))
+    added = 0
+    for spec in DEFAULT_RULES:
+        if spec["key"] in seeded:
+            continue
+        if spec["name"] not in names:
+            session.add(Rule(**{k: v for k, v in spec.items() if k != "key"}))
+            added += 1
+        seeded.add(spec["key"])
+    value = ",".join(sorted(seeded))
+    if state:
+        state.value = value
+    else:
+        session.add(SyncState(key=_SEEDED, value=value))
+    return added

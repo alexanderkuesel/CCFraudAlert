@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Settings · Fraud Alert{% endblock %}
+{% block title %}Settings{% endblock %}
 {% block content %}
 <form class="card" method="post" action="/settings">
   <h3 style="margin-top:0">Normal currencies</h3>
@@ -19,6 +19,8 @@
     <tr><td>Home currency (rule amounts are converted to it)</td><td><code>{{ settings.home_currency }}</code></td></tr>
     <tr><td>Home country (purchases elsewhere are foreign)</td><td><code>{{ settings.home_country or '— not set' }}</code></td></tr>
     <tr><td>Timezone</td><td><code>{{ settings.timezone }}</code></td></tr>
+    <tr><td>Card-test threshold (amounts at or below this raise a High alarm)</td><td><code>{{ settings.test_amount_max }} {{ settings.home_currency }}</code></td></tr>
+    <tr><td>Card-test follow-up window (larger charges after a test are escalated)</td><td><code>{{ settings.test_followup_hours }} h</code></td></tr>
     <tr><td>Exchange-rate overrides</td><td><code>{{ settings.fx_rates or '— built-in approximate rates' }}</code></td></tr>
   </table>
 </div>

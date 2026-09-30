@@ -1,14 +1,58 @@
-# CCFraudAlert
+# CC Transaction Alarm Dashboard
 
-A personal credit-card fraud alert pipeline. It reads the transaction alert emails your bank sends you,
-stores each transaction in PostgreSQL, applies rules you can change at any time, and scores every
-transaction with an anomaly detector. The detector is a statistical baseline for now and is built to be
-swapped for a neural net later. A small web UI shows transactions, alerts and rules.
+A **passive**, SCADA-style alarm dashboard for your credit-card transactions.
+
+It reads the transaction alert emails your bank already sends you, stores each transaction in PostgreSQL,
+and raises **alarms** when a transaction looks wrong. You then acknowledge each alarm as legit or fraud,
+the way an operator works an alarm list in a control room.
+
+> **Passive by design.** The dashboard only *observes*: it reads your mailbox read-only (it never
+> marks, moves or sends mail), and it never blocks a card, contacts your bank or moves money. Acting on
+> an alarm (calling the bank, freezing the card) is always your decision. It is also **not real-time**:
+> it sees a transaction only once the bank's email arrives and the next inbox sync runs (every 5
+> minutes by default).
+
+## Inspired by SCADA alarm management
+
+Industrial control rooms have spent decades learning how to alert a human without drowning them in
+noise. This project deliberately borrows that discipline and applies it to card transactions:
+
+* **ISA-18.2 (alarm management)** defines what an alarm is, its lifecycle and its priorities.
+* **ISA-101 (HMI design)** defines the "high-performance HMI" look: grey and quiet when things are
+  normal, with colour reserved for abnormal conditions, so an alarm stands out the moment it appears.
+
+(ISA-95, often mentioned alongside these, covers integrating business and control systems; it doesn't
+define alarm handling, so the alarm behaviour here follows ISA-18.2.)
+
+| ISA-18.2 / SCADA concept | In this dashboard |
+|---|---|
+| Process event | A card transaction parsed from a bank alert email |
+| Alarm | A rule matching a transaction (see **Alarm rules**) |
+| Alarm priority | **1 High** (act now), **2 Medium** (check today), **3 Low** (review when convenient); shown by colour, shape *and* number (red square, amber triangle, slate diamond) |
+| Unacknowledged alarm | Flashes in the alarm summary and counts in the banner at the top of every page |
+| Acknowledge | **Ack · Legit** / **Ack · Fraud**: your review. The disposition is kept, and doubles as a training label for the anomaly model |
+| Latched alarm | Transactions are discrete events, so there is no "return to normal": an alarm stays active until you acknowledge it |
+| Alarm summary / journal | **Alarm summary** page: *Unacknowledged* (default), *All alarms*, and *Journal* (every transaction) |
+| Rationalization | Each rule carries a rationale (why it exists) and a priority. Keep High rare so it keeps its meaning |
+| Alarm system KPIs | Alarm rate per day, and priority mix vs. the ISA-18.2 guideline of roughly 5% High / 15% Medium / 80% Low |
+
+Built-in alarms:
+
+* **Card test (zero/near-zero amount)** (High): a `$0.00`-style authorisation. Fraudsters verify a
+  stolen card this way right before using it.
+* **Charge after a card test** (High): a real charge on the same card within 48 hours of a test-sized one.
+* **Large or foreign purchase** (Medium): over 100 in your home currency, made abroad, or in a currency
+  you don't normally use.
+
+Existing installs receive new built-in alarms automatically on upgrade (once; if you delete one, it stays deleted).
 
 ```
- IMAP inbox ──► parse email ──► transaction ──► features ──► anomaly score ──► rules ──► alerts
- (read-only)     (parsers.py)   (PostgreSQL)   (features.py)  (anomaly/*.py)   (engine.py)  (UI + webhook)
+ IMAP inbox ──► parse email ──► transaction ──► features ──► anomaly score ──► alarm rules ──► alarm summary
+ (read-only)     (parsers.py)   (PostgreSQL)   (features.py)  (anomaly/*.py)   (engine.py)     (UI + webhook)
 ```
+
+The internal names (`fraudalert` package and CLI, `FRAUDALERT_*` settings) are unchanged so existing
+installs keep working.
 
 ## Quick start (Docker)
 
@@ -53,14 +97,15 @@ fraudalert serve
 * Your bank also has to send the alerts: in its app, set the "transaction alert" threshold to $0.01
   so every purchase produces an email.
 
-## Rules
+## Alarm rules
 
-Rules are stored in the database, so you can add, disable or delete them from the **Rules** page or the
+Rules are stored in the database, so you can add, disable or delete them from the **Alarm rules** page or the
 API while the pipeline is running. Every change is applied to your whole history straight away.
 
-A rule is a list of conditions joined by **ALL** (AND) or **ANY** (OR). The default rule is the one you asked for:
+A rule is a list of conditions joined by **ALL** (AND) or **ANY** (OR), plus a priority. For example:
 
-> **Large or foreign purchase**: `amount > 100 OR is_foreign = true`
+> **Large or foreign purchase** (Medium): `amount > 100 OR is_foreign = true`
+> **Card test** (High): `is_test_amount = true`
 
 | field           | type   | notes                                                      |
 |-----------------|--------|------------------------------------------------------------|
@@ -71,6 +116,8 @@ A rule is a list of conditions joined by **ALL** (AND) or **ANY** (OR). The defa
 | `card_last4`    | text   |                                                            |
 | `is_foreign`    | bool   | bought outside `FRAUDALERT_HOME_COUNTRY` (when the email names a country, or says "foreign transaction"), **or** in a currency that isn't one of your normal currencies |
 | `unusual_currency` | bool | currency isn't one of your normal currencies (Settings page / `FRAUDALERT_NORMAL_CURRENCIES`) |
+| `is_test_amount` | bool  | amount (home currency) ≤ `FRAUDALERT_TEST_AMOUNT_MAX` (default 1.0), e.g. a `$0.00` authorisation |
+| `follows_test`  | bool   | the same card had a test-sized transaction within `FRAUDALERT_TEST_FOLLOWUP_HOURS` (default 48) before this one |
 | `hour`          | number | 0–23 in `FRAUDALERT_TIMEZONE`                              |
 | `weekday`       | number | 0 = Monday                                                 |
 | `anomaly_score` | number | 0–1 from the anomaly detector (empty until ~10 transactions of history) |
@@ -90,8 +137,9 @@ Other endpoints: `GET /api/transactions?flagged=true`, `GET /api/rules`, `DELETE
 
 ## Notifications
 
-Set `FRAUDALERT_NOTIFY_WEBHOOK_URL` to get a POST for every newly flagged transaction. The payload has
-`text` (Slack/Mattermost), `content` (Discord) and structured `transaction` fields. Transactions older
+Set `FRAUDALERT_NOTIFY_WEBHOOK_URL` to get a POST for every new alarm. The message leads with the
+priority (`[HIGH] Transaction alarm: ...`). The payload has `text` (Slack/Mattermost), `content` (Discord),
+`priority`, and structured `transaction` fields. Transactions older
 than 2 days are not sent, so a historical backfill won't flood you.
 
 ## Anomaly detection: the road to a neural net

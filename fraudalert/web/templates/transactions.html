@@ -1,42 +1,77 @@
 {% extends "base.html" %}
+{% block title %}{{ VIEWS[view] }}{% endblock %}
 {% block content %}
-<div class="stats">
-  <div class="stat"><b>{{ stats.total }}</b><span>transactions</span></div>
-  <div class="stat"><b>{{ stats.flagged }}</b><span>flagged</span></div>
-  <div class="stat"><b>{{ stats.unparsed }}</b><span><a href="/emails">unparsed emails</a></span></div>
-  <div class="stat"><b style="font-size:1rem">{{ last_sync or 'never' }}</b><span>last inbox sync ({{ tz }})</span></div>
+<div class="kpis">
+  <div class="kpi"><span>Unacknowledged</span><b>{{ counts.unack }}</b></div>
+  <div class="kpi" title="Flagged transactions per day over the last 7 days">
+    <span>Alarm rate (7 days)</span><b>{{ kpi.per_day_7d }}<small>/day</small></b></div>
+  <div class="kpi kpi-mix" title="Share of alarms by priority over the last 30 days vs ISA-18.2 guidance (~5% High, 15% Medium, 80% Low)">
+    <span>Priority mix (30 days) · target</span>
+    <div class="mix">
+      {% for rank in (1, 2, 3) %}
+        <span><span class="pri pri-{{ rank }}" aria-hidden="true">{{ rank }}</span>{{ kpi.mix[rank] }}%
+          <small class="muted">/ {{ kpi.target[rank] }}%</small></span>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="kpi"><span>Unparsed emails</span><b><a href="/emails">{{ counts.unparsed }}</a></b></div>
+  <div class="kpi"><span>Last inbox sync ({{ tz }})</span><b class="small">{{ last_sync or 'never' }}</b></div>
 </div>
 
-<form class="toolbar" method="get">
-  <input type="search" name="q" value="{{ q }}" placeholder="Search merchant or currency">
-  <label style="display:flex;gap:.3rem;align-items:center;margin:0;color:inherit;font-size:inherit">
-    <input type="checkbox" name="flagged" value="true" {{ 'checked' if flagged }} onchange="this.form.submit()"> Flagged only
-  </label>
-  <button>Filter</button>
-  <span class="muted">{{ total }} result{{ '' if total == 1 else 's' }}</span>
-</form>
+<div class="toolbar">
+  <div class="tabs" role="tablist">
+    {% for key, label in VIEWS.items() %}
+      <a role="tab" href="?view={{ key }}{{ '&q=' ~ q|urlencode if q }}" aria-selected="{{ 'true' if view == key else 'false' }}">
+        {{ label }} <span class="tab-count">{{ counts[key] }}</span></a>
+    {% endfor %}
+  </div>
+  <form method="get" class="search">
+    <input type="hidden" name="view" value="{{ view }}">
+    <input type="search" name="q" value="{{ q }}" placeholder="Search merchant or currency" aria-label="Search">
+    <button class="btn">Search</button>
+  </form>
+</div>
 
 <div class="table-wrap">
-<table>
+<table class="alarm-table">
   <thead><tr>
-    <th>When ({{ tz }})</th><th>Merchant</th><th>Card</th><th style="text-align:right">Amount</th>
-    <th title="0 = normal, 1 = very unusual">Anomaly</th><th>Alerts</th><th>Review</th><th>Comment</th>
+    <th title="Alarm priority (ISA-18.2): 1 High · 2 Medium · 3 Low">Pri</th><th>State</th><th title="Local time, {{ tz }}">Time</th>
+    <th>Merchant</th><th>Card</th><th style="text-align:right">Amount</th>
+    <th title="Anomaly score: 0 = normal, 1 = very unusual">Anom.</th><th>Alarm</th><th>Acknowledge</th><th>Comment</th>
   </tr></thead>
   <tbody>
   {% for t in rows %}
-    {% set review = 'label-fraud' if t.label_fraud else ('label-legit' if t.label_fraud is false else ('flagged' if t.flagged else '')) %}
-    <tr class="{{ review }}">
-      <td class="muted" style="white-space:nowrap">{{ t.occurred_at | local }}</td>
-      <td>{{ t.merchant or '—' }}{% if t.is_foreign or t.currency not in normal %} <span class="pill foreign">foreign</span>{% endif %}</td>
-      <td class="muted" style="white-space:nowrap">{{ ('…' ~ t.card_last4) if t.card_last4 else '' }}</td>
-      <td class="num">{{ '{:,.2f}'.format(t.amount) }} {{ t.currency }}</td>
-      <td class="num">{{ '%.2f' % t.anomaly_score if t.anomaly_score is not none else '—' }}</td>
-      <td>{% for a in t.alerts %}<div class="alert-reason">{{ a.reason }}</div>{% endfor %}</td>
-      <td style="white-space:nowrap">
+    {% set pri = txn_priority(t) %}
+    {% set unack = t.flagged and t.label_fraud is none %}
+    {% set state = 'fraud' if t.label_fraud else ('legit' if t.label_fraud is false else ('unack' if unack else 'normal')) %}
+    <tr class="row-{{ state }} {{ ('pri-row-' ~ pri) if pri }}">
+      <td>{% if pri %}<span class="pri pri-{{ pri }} {{ 'blink' if unack }}" title="Priority {{ pri }} · {{ PRIORITY_NAME[pri] }}">{{ pri }}</span>{% endif %}</td>
+      <td class="state">
+        {% if state == 'unack' %}<span class="state-tag unack">UNACK</span>
+        {% elif state == 'fraud' %}<span class="badge badge-fraud">✗ FRAUD</span>
+        {% elif state == 'legit' %}<span class="badge badge-legit">✓ LEGIT</span>
+        {% else %}<span class="muted">—</span>{% endif %}
+      </td>
+      <td class="nowrap mono">{{ t.occurred_at | local }}</td>
+      <td>{{ t.merchant or '—' }}{% if t.is_foreign or t.currency not in normal %} <span class="tag">foreign</span>{% endif %}</td>
+      <td class="nowrap mono muted">{{ ('…' ~ t.card_last4) if t.card_last4 else '' }}</td>
+      <td class="num mono">{{ '{:,.2f}'.format(t.amount) }} {{ t.currency }}</td>
+      <td class="num mono">{{ '%.2f' % t.anomaly_score if t.anomaly_score is not none else '—' }}</td>
+      <td>{% for a in alarms_by_priority(t) %}
+            <div class="alarm-text" title="{{ a.reason }}"><span class="pri pri-sm pri-{{ PRIORITY_RANK.get(a.severity, 3) }}" aria-hidden="true">{{ PRIORITY_RANK.get(a.severity, 3) }}</span>{{ a.rule.name if a.rule else a.reason }}</div>{% endfor %}</td>
+      <td class="nowrap">
         {% if t.label_fraud is none %}
-          <form class="inline" method="post" action="/transactions/{{ t.id }}/label"><button class="link" name="label" value="legit">✓ legit</button><button class="link" name="label" value="fraud" style="color:var(--danger)">✗ fraud</button></form>
+          {% if t.flagged %}
+          <form class="inline" method="post" action="/transactions/{{ t.id }}/label">
+            <button class="btn btn-sm" name="label" value="legit" title="Acknowledge: this was me">Ack · Legit</button>
+            <button class="btn btn-sm btn-fraud" name="label" value="fraud" title="Acknowledge: not me">Ack · Fraud</button>
+          </form>
+          {% else %}
+          <form class="inline" method="post" action="/transactions/{{ t.id }}/label">
+            <button class="link" name="label" value="fraud" title="Mark as fraud even though no alarm fired">mark fraud</button>
+          </form>
+          {% endif %}
         {% else %}
-          <span class="badge {{ 'badge-fraud' if t.label_fraud else 'badge-legit' }}">{{ '✗ FRAUD' if t.label_fraud else '✓ LEGIT' }}</span>
           <form class="inline" method="post" action="/transactions/{{ t.id }}/label"><button class="link" name="label" value="">undo</button></form>
         {% endif %}
       </td>
@@ -48,7 +83,10 @@
       </td>
     </tr>
   {% else %}
-    <tr><td colspan="8" class="muted">No transactions yet. Click “Sync inbox”, or import .eml files with <code>fraudalert import-eml</code>.</td></tr>
+    <tr><td colspan="10" class="empty">
+      {% if view == 'unack' %}<b>All clear.</b> No unacknowledged alarms. <a href="?view=journal">Open the journal</a> to see every transaction.
+      {% else %}Nothing here yet. Click “Sync inbox”, or import .eml files with <code>fraudalert import-eml</code>.{% endif %}
+    </td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -77,9 +115,9 @@ document.querySelectorAll('.comment-form').forEach(form => {
 
 {% if pages > 1 %}
 <div class="pager">
-  {% if page > 1 %}<a href="?q={{ q|urlencode }}&flagged={{ 'true' if flagged else '' }}&page={{ page - 1 }}">← newer</a>{% endif %}
+  {% if page > 1 %}<a href="?view={{ view }}&q={{ q|urlencode }}&page={{ page - 1 }}">← previous</a>{% endif %}
   <span class="muted">page {{ page }} / {{ pages }}</span>
-  {% if page < pages %}<a href="?q={{ q|urlencode }}&flagged={{ 'true' if flagged else '' }}&page={{ page + 1 }}">older →</a>{% endif %}
+  {% if page < pages %}<a href="?view={{ view }}&q={{ q|urlencode }}&page={{ page + 1 }}">next →</a>{% endif %}
 </div>
 {% endif %}
 {% endblock %}

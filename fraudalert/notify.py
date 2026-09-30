@@ -12,8 +12,10 @@ def notify(settings: Settings, txn: Transaction, reasons: list[str]) -> bool:
     """POST to the configured webhook. The `text` key works with Slack/Discord/Mattermost-style hooks."""
     if not settings.notify_webhook_url:
         return False
+    rank = min(({"high": 1, "medium": 2, "low": 3}.get(a.severity, 3) for a in txn.alerts), default=3)
+    priority = {1: "HIGH", 2: "MEDIUM", 3: "LOW"}[rank]
     text = (
-        f"⚠️ Card alert: {txn.amount} {txn.currency} at {txn.merchant or 'unknown merchant'}"
+        f"[{priority}] Transaction alarm: {txn.amount} {txn.currency} at {txn.merchant or 'unknown merchant'}"
         f" on {txn.occurred_at:%Y-%m-%d %H:%M}"
         + (f" (card …{txn.card_last4})" if txn.card_last4 else "")
         + "\n" + "\n".join(f"• {r}" for r in reasons)
@@ -30,6 +32,7 @@ def notify(settings: Settings, txn: Transaction, reasons: list[str]) -> bool:
             "card_last4": txn.card_last4,
             "anomaly_score": txn.anomaly_score,
         },
+        "priority": priority,
         "reasons": reasons,
     }
     try:

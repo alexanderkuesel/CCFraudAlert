@@ -191,3 +191,69 @@ def test_normal_currencies_preference(db, tmp_path, monkeypatch):
     pipeline.reevaluate_all()
     assert flagged() == {"AMAZON", "DUTY FREE", "PULPERIA"}
     get_settings.cache_clear()
+
+
+def test_card_test_then_charge_are_high_priority(db, tmp_path, monkeypatch):
+    """The user's real case: a USD .00 authorisation at AMAZON.COM LLC, then a larger charge."""
+    from fraudalert.config import get_settings
+    from fraudalert.models import Alert
+
+    from .bac import bac_eml
+
+    monkeypatch.setenv("FRAUDALERT_HOME_COUNTRY", "Costa Rica")
+    monkeypatch.setenv("FRAUDALERT_NORMAL_CURRENCIES", "CRC,USD")
+    monkeypatch.setenv("FRAUDALERT_TIMEZONE", "America/Costa_Rica")
+    get_settings.cache_clear()
+    t0 = NOW - timedelta(days=1)
+    card = ("AMEX", "***********4321")
+    emails = {
+        "test": bac_eml(t0, merchant="AMAZON.COM LLC", place=", Estados Unidos", amount="USD .00", card=card,
+                        date=(t0 - timedelta(hours=6)).strftime("%b %d, %Y, %H:%M")),
+        "charge": bac_eml(t0 + timedelta(hours=3), merchant="BEST BUY", place="SAN JOSE, Costa Rica", amount="USD 480.00",
+                          card=card, date=(t0 - timedelta(hours=3)).strftime("%b %d, %Y, %H:%M")),
+        "other_card": bac_eml(t0 + timedelta(hours=4), merchant="SODA", place="HEREDIA, Costa Rica", amount="CRC 5,000.00",
+                              card=("VISA", "***********9999"), date=(t0 - timedelta(hours=2)).strftime("%b %d, %Y, %H:%M")),
+        "much_later": bac_eml(t0 + timedelta(days=5), merchant="SODA", place="HEREDIA, Costa Rica", amount="CRC 5,000.00",
+                              card=card, date=(t0 + timedelta(days=5) - timedelta(hours=6)).strftime("%b %d, %Y, %H:%M")),
+    }
+    files = []
+    for name, raw in emails.items():
+        p = tmp_path / f"{name}.eml"
+        p.write_bytes(raw)
+        files.append(p)
+    r = pipeline.import_eml_files(files)
+    assert (r.parsed, r.failed) == (4, 0)
+    with db.session_scope() as s:
+        alerts = {}
+        for a in s.scalars(select(Alert)):
+            alerts.setdefault(a.transaction.merchant + "/" + (a.transaction.card_last4 or ""), set()).add(
+                (a.rule.name, a.severity))
+    assert ("Card test (zero/near-zero amount)", "high") in alerts["AMAZON.COM LLC/4321"]
+    assert ("Charge after a card test", "high") in alerts["BEST BUY/4321"]
+    assert "SODA/9999" not in alerts  # different card, local, small: no alarm
+    assert "SODA/4321" not in alerts  # 5 days later: outside the follow-up window
+    get_settings.cache_clear()
+
+
+def test_new_builtin_rules_reach_existing_installs_once(db):
+    """Upgrading an install that only has the original default rule adds the new built-ins; deleting one
+    later does not bring it back; the original rule is left exactly as the user had it."""
+    from fraudalert.models import Rule, SyncState
+
+    with db.session_scope() as s:  # simulate a pre-upgrade database: only the old rule, no seeding record
+        for r in s.scalars(select(Rule)):
+            if r.name != "Large or foreign purchase":
+                s.delete(r)
+            else:
+                r.severity = "high"  # user's existing setting
+        s.delete(s.get(SyncState, "seeded_rules"))
+    db.init_db()
+    with db.session_scope() as s:
+        rules = {r.name: r.severity for r in s.scalars(select(Rule))}
+    assert rules == {"Large or foreign purchase": "high", "Card test (zero/near-zero amount)": "high",
+                     "Charge after a card test": "high"}
+    with db.session_scope() as s:
+        s.delete(s.scalar(select(Rule).where(Rule.name == "Charge after a card test")))
+    db.init_db()
+    with db.session_scope() as s:
+        assert "Charge after a card test" not in set(s.scalars(select(Rule.name)))

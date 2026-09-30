@@ -1,6 +1,6 @@
 import secrets
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
@@ -17,12 +17,13 @@ from sqlalchemy.orm import selectinload
 from fraudalert import pipeline, prefs
 from fraudalert.config import get_settings
 from fraudalert.db import init_db, session_scope
-from fraudalert.models import RawEmail, Rule, SyncState, Transaction
+from fraudalert.models import Alert, RawEmail, Rule, SyncState, Transaction
 from fraudalert.rules.engine import FIELDS, OPS, RuleError, RuleSpec, describe, validate_rule
 
 HERE = Path(__file__).parent
 PAGE_SIZE = 50
-SEVERITIES = ["low", "medium", "high"]
+SEVERITIES = ["high", "medium", "low"]
+APP_NAME = "CC Transaction Alarm Dashboard"
 COMMENT_MAX = 1000
 
 _basic = HTTPBasic(auto_error=False)
@@ -46,6 +47,52 @@ async def _lifespan(app: FastAPI):
     yield
 
 
+# ---- ISA-18.2 alarm vocabulary --------------------------------------------------------------
+# Rules store severity as low/medium/high; the UI shows it as alarm priority P1-P3.
+PRIORITY_RANK = {"high": 1, "medium": 2, "low": 3}
+PRIORITY_NAME = {1: "High", 2: "Medium", 3: "Low"}
+# ISA-18.2 guidance for a healthy system: roughly 5% high, 15% medium, 80% low priority alarms.
+PRIORITY_TARGET = {1: 5, 2: 15, 3: 80}
+VIEWS = {"unack": "Unacknowledged", "alarms": "All alarms", "journal": "Journal"}
+
+
+def txn_priority(t: Transaction) -> int | None:
+    """Highest (numerically lowest) priority among a transaction's alarms."""
+    ranks = [PRIORITY_RANK.get(a.severity, 3) for a in t.alerts]
+    return min(ranks) if ranks else None
+
+
+def unack_by_priority(s) -> dict[int, int]:
+    """Unacknowledged alarms per priority, counting each transaction once at its highest priority."""
+    best: dict[int, int] = {}
+    for txn_id, severity in s.execute(
+        select(Alert.transaction_id, Alert.severity).join(Transaction)
+        .where(Transaction.flagged.is_(True), Transaction.label_fraud.is_(None))
+    ):
+        rank = PRIORITY_RANK.get(severity, 3)
+        best[txn_id] = min(best.get(txn_id, 9), rank)
+    counts = {1: 0, 2: 0, 3: 0}
+    for rank in best.values():
+        counts[rank] += 1
+    return counts
+
+
+def alarm_kpis(s) -> dict:
+    """ISA-18.2 style performance indicators over the last 30 days of transactions."""
+    since = datetime.now(timezone.utc) - timedelta(days=30)
+    best: dict[int, int] = {}
+    for txn_id, severity in s.execute(
+        select(Alert.transaction_id, Alert.severity).join(Transaction).where(Transaction.occurred_at >= since)
+    ):
+        best[txn_id] = min(best.get(txn_id, 9), PRIORITY_RANK.get(severity, 3))
+    n = len(best)
+    mix = {p: round(100 * sum(1 for r in best.values() if r == p) / n) if n else 0 for p in (1, 2, 3)}
+    week = datetime.now(timezone.utc) - timedelta(days=7)
+    last7 = s.scalar(select(func.count(Transaction.id)).where(
+        Transaction.flagged.is_(True), Transaction.occurred_at >= week))
+    return {"alarms_30d": n, "mix": mix, "target": PRIORITY_TARGET, "per_day_7d": round(last7 / 7, 1)}
+
+
 def _local(dt: datetime | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
     if dt is None:
         return ""
@@ -55,11 +102,22 @@ def _local(dt: datetime | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
 
 
 def create_app(init: bool = True) -> FastAPI:
-    app = FastAPI(title="Fraud Alert", dependencies=[Depends(require_auth)], lifespan=_lifespan if init else None)
+    app = FastAPI(title=APP_NAME, dependencies=[Depends(require_auth)], lifespan=_lifespan if init else None)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.globals.update(describe=lambda r: describe(RuleSpec(r.id, r.name, r.match, r.conditions)))
     templates.env.filters["local"] = _local
+
+    def banner() -> dict:
+        with session_scope() as s:
+            counts = unack_by_priority(s)
+        return {"counts": counts, "total": sum(counts.values())}
+
+    templates.env.globals.update(
+        alarm_banner=banner, txn_priority=txn_priority,
+        alarms_by_priority=lambda t: sorted(t.alerts, key=lambda a: PRIORITY_RANK.get(a.severity, 3)), PRIORITY_NAME=PRIORITY_NAME, PRIORITY_RANK=PRIORITY_RANK,
+        VIEWS=VIEWS, APP_NAME=APP_NAME,
+    )
 
     @app.middleware("http")
     async def same_origin_only(request: Request, call_next):
@@ -78,32 +136,50 @@ def create_app(init: bool = True) -> FastAPI:
     # ---------- HTML ----------
 
     @app.get("/")
-    def transactions(request: Request, flagged: bool = False, q: str = "", page: int = 1):
+    def alarm_summary(request: Request, view: str = "unack", q: str = "", page: int = 1, flagged: bool = False):
+        """ISA-18.2-style alarm summary. Views: unack (default), alarms (incl. acknowledged), journal (all)."""
+        if flagged:  # old links
+            view = "alarms"
+        view = view if view in VIEWS else "unack"
         page = max(page, 1)
         with session_scope() as s:
-            stmt = select(Transaction).options(selectinload(Transaction.alerts))
-            if flagged:
+            stmt = select(Transaction).options(selectinload(Transaction.alerts).selectinload(Alert.rule))
+            if view == "unack":
+                stmt = stmt.where(Transaction.flagged.is_(True), Transaction.label_fraud.is_(None))
+            elif view == "alarms":
                 stmt = stmt.where(Transaction.flagged.is_(True))
             if q:
                 like = f"%{q}%"
                 stmt = stmt.where(or_(Transaction.merchant.ilike(like), Transaction.currency.ilike(like)))
-            total = s.scalar(select(func.count()).select_from(stmt.subquery()))
-            rows = s.scalars(
-                stmt.order_by(Transaction.occurred_at.desc()).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
-            ).all()
-            stats = {
-                "total": s.scalar(select(func.count(Transaction.id))),
-                "flagged": s.scalar(select(func.count(Transaction.id)).where(Transaction.flagged.is_(True))),
+            if view == "journal":
+                total = s.scalar(select(func.count()).select_from(stmt.subquery()))
+                rows = s.scalars(
+                    stmt.order_by(Transaction.occurred_at.desc()).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
+                ).all()
+            else:
+                # Alarm lists: unacknowledged first, then priority, then newest (per-user volumes are small).
+                everything = sorted(
+                    s.scalars(stmt).all(),
+                    key=lambda t: (t.label_fraud is not None, txn_priority(t) or 9, -t.occurred_at.timestamp()),
+                )
+                total = len(everything)
+                rows = everything[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
+            counts = {
+                "unack": s.scalar(select(func.count(Transaction.id)).where(
+                    Transaction.flagged.is_(True), Transaction.label_fraud.is_(None))),
+                "alarms": s.scalar(select(func.count(Transaction.id)).where(Transaction.flagged.is_(True))),
+                "journal": s.scalar(select(func.count(Transaction.id))),
                 "unparsed": s.scalar(select(func.count(RawEmail.id)).where(RawEmail.parse_status == "failed")),
             }
             last_sync = s.get(SyncState, "last_imap_sync")
             normal = set(prefs.normal_currencies(s, get_settings()))
+            kpi = alarm_kpis(s)
         return templates.TemplateResponse(
             request,
             "transactions.html",
             {
-                "rows": rows, "flagged": flagged, "q": q, "page": page, "total": total,
-                "pages": max(1, -(-total // PAGE_SIZE)), "stats": stats,
+                "rows": rows, "view": view, "q": q, "page": page, "total": total, "counts": counts,
+                "pages": max(1, -(-total // PAGE_SIZE)), "kpi": kpi,
                 "last_sync": _local(datetime.fromisoformat(last_sync.value)) if last_sync else None,
                 "tz": get_settings().timezone,
                 "normal": normal,
@@ -160,13 +236,15 @@ def create_app(init: bool = True) -> FastAPI:
         try:
             if not name:
                 raise RuleError("give the rule a name")
+            if str(form.get("severity", "low")) not in SEVERITIES:
+                raise RuleError(f"priority must be one of {', '.join(SEVERITIES)}")
             clean = validate_rule(str(form.get("match", "all")), conditions)
         except RuleError as exc:
             return redirect("/rules", error=str(exc))
         with session_scope() as s:
             s.add(Rule(
                 name=name, description=str(form.get("description", "")), match=str(form.get("match")),
-                conditions=clean, severity=str(form.get("severity", "medium")),
+                conditions=clean, severity=str(form.get("severity", "low")),
             ))
         result = pipeline.reevaluate_all()
         return redirect("/rules", msg=f"Rule '{name}' added and applied to history ({result.flagged} flagged).")
@@ -178,6 +256,18 @@ def create_app(init: bool = True) -> FastAPI:
             rule.enabled = not rule.enabled
         pipeline.reevaluate_all()
         return redirect("/rules", msg="Rule updated and history re-evaluated.")
+
+    @app.post("/rules/{rule_id}/priority")
+    async def set_rule_priority(rule_id: int, request: Request):
+        severity = str((await request.form()).get("severity", ""))
+        if severity not in SEVERITIES:
+            return redirect("/rules", error=f"priority must be one of {', '.join(SEVERITIES)}")
+        with session_scope() as s:
+            rule = s.get(Rule, rule_id) or _404()
+            rule.severity = severity
+            name = rule.name
+        pipeline.reevaluate_all()
+        return redirect("/rules", msg=f"'{name}' is now {PRIORITY_NAME[PRIORITY_RANK[severity]]} priority.")
 
     @app.post("/rules/{rule_id}/delete")
     def delete_rule(rule_id: int):

@@ -3,7 +3,7 @@ import pytest
 from fraudalert.rules.engine import RuleError, RuleSpec, describe, evaluate, validate_rule
 
 CTX = {"amount": 150.0, "currency": "USD", "merchant": "Amazon Mktpl", "card_last4": "1234",
-       "is_foreign": False, "unusual_currency": False, "hour": 3, "weekday": 5, "anomaly_score": None}
+       "is_foreign": False, "unusual_currency": False, "is_test_amount": False, "follows_test": False, "hour": 3, "weekday": 5, "anomaly_score": None}
 
 
 def rule(match, conds):

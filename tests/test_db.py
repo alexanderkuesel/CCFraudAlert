@@ -31,7 +31,9 @@ def test_concurrent_init_db_on_empty_database():
         t.join()
     assert errors == []
     with dbmod.session_scope() as s:
-        assert s.scalar(select(func.count(Rule.id))) == 1  # seeded exactly once
+        from fraudalert.pipeline import DEFAULT_RULES
+
+        assert s.scalar(select(func.count(Rule.id))) == len(DEFAULT_RULES)  # each seeded exactly once
     dbmod.Base.metadata.drop_all(dbmod.get_engine())
 
 

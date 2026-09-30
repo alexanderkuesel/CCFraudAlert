@@ -27,7 +27,8 @@ def test_pages_and_rule_crud(db, tmp_path):
     assert "expected a number" in r.text
 
     api = client.get("/api/rules").json()
-    assert [x["name"] for x in api] == ["Large or foreign purchase", "Hotels"]
+    assert [x["name"] for x in api] == [
+        "Large or foreign purchase", "Card test (zero/near-zero amount)", "Charge after a card test", "Hotels"]
     r = client.post("/api/rules", json={"name": "Night", "conditions": [{"field": "hour", "op": "lt", "value": 5}]})
     assert r.status_code == 201
     assert client.post("/api/rules", json={"name": "x", "conditions": []}).status_code == 422
@@ -134,13 +135,69 @@ def test_review_styling_and_comments(db, tmp_path):
     assert len(by["LEGITCO"]["comment"]) == 1000
     assert by["PENDING"]["comment"] is None
 
-    html = client.get("/").text
+    html = client.get("/?view=journal").text
     rows = {m: html.split(m)[0].rsplit("<tr", 1)[1] for m in ("FRAUDY", "LEGITCO", "PENDING")}
-    assert 'class="label-fraud"' in rows["FRAUDY"]
-    assert 'class="label-legit"' in rows["LEGITCO"]
-    assert 'class="flagged"' in rows["PENDING"]  # $500 matches the default rule, not reviewed yet
+    assert 'class="row-fraud' in rows["FRAUDY"]
+    assert 'class="row-legit' in rows["LEGITCO"]
+    assert 'class="row-unack' in rows["PENDING"]  # $500 matches the default rule, not acknowledged yet
     assert "✗ FRAUD" in html and "✓ LEGIT" in html
     assert 'value="not me — card cancelled"' in html
 
     client.post(f"/transactions/{ids['FRAUDY']}/comment", data={"comment": ""})  # clearing
     assert {t["merchant"]: t["comment"] for t in client.get("/api/transactions").json()}["FRAUDY"] is None
+
+
+def test_alarm_summary_views_banner_and_priorities(db, tmp_path):
+    """ISA-18.2 alarm summary: unacknowledged first by priority, banner counts, acknowledge, priority edits."""
+    from fraudalert.models import Rule
+    from sqlalchemy import select
+
+    now = datetime.now(timezone.utc)
+    files = []
+    for i, (merchant, amount) in enumerate([("CARD TESTER", "0.00"), ("BIG TV", "900.00"), ("COFFEE", "4.50")]):
+        p = tmp_path / f"{i}.eml"
+        p.write_bytes(make_eml("Alert", f"You spent ${amount} at {merchant}.", now - timedelta(hours=10 - i)))
+        files.append(p)
+    pipeline.import_eml_files(files)
+    client = TestClient(create_app(init=False))
+
+    html = client.get("/").text  # default view = unacknowledged
+    assert "CC Transaction Alarm Dashboard" in html and "Passive monitor" in html
+    assert "COFFEE" not in html  # no alarm -> not in the alarm summary
+    assert html.index("CARD TESTER") < html.index("BIG TV")  # High (card test) sorts before Medium
+    assert 'title="Priority 1 · High"' in html and 'title="Priority 2 · Medium"' in html
+    assert "Unacknowledged alarms" in html  # banner
+    assert "COFFEE" in client.get("/?view=journal").text
+
+    ids = {t["merchant"]: t["id"] for t in client.get("/api/transactions").json()}
+    client.post(f"/transactions/{ids['CARD TESTER']}/label", data={"label": "fraud"})
+    client.post(f"/transactions/{ids['BIG TV']}/label", data={"label": "legit"})
+    html = client.get("/").text
+    assert "All clear." in html and "No unacknowledged alarms" in html
+    alarms = client.get("/?view=alarms").text
+    assert "CARD TESTER" in alarms and "BIG TV" in alarms and "✗ FRAUD" in alarms and "✓ LEGIT" in alarms
+    assert client.get("/?flagged=true").text.count("BIG TV") >= 1  # old links still work
+
+    with db.session_scope() as s:
+        rule_id = s.scalar(select(Rule.id).where(Rule.name == "Large or foreign purchase"))
+    r = client.post(f"/rules/{rule_id}/priority", data={"severity": "low"})
+    assert "is now Low priority" in r.text
+    assert "priority must be one of" in client.post(f"/rules/{rule_id}/priority", data={"severity": "urgent"}).text
+    client.post(f"/transactions/{ids['BIG TV']}/label", data={"label": ""})  # un-acknowledge
+    assert 'title="Priority 3 · Low"' in client.get("/").text
+
+
+def test_notification_leads_with_priority(db, tmp_path, monkeypatch):
+    import httpx
+
+    from fraudalert.config import get_settings
+
+    sent = []
+    monkeypatch.setenv("FRAUDALERT_NOTIFY_WEBHOOK_URL", "https://hooks.example/x")
+    get_settings.cache_clear()
+    monkeypatch.setattr(httpx, "post", lambda url, json, timeout: sent.append(json) or httpx.Response(200, request=httpx.Request("POST", url)))
+    p = tmp_path / "t.eml"
+    p.write_bytes(make_eml("Alert", "You spent $0.00 at CARD TESTER.", datetime.now(timezone.utc) - timedelta(hours=1)))
+    pipeline.import_eml_files([p])
+    assert sent and sent[0]["priority"] == "HIGH" and sent[0]["text"].startswith("[HIGH] Transaction alarm")
+    get_settings.cache_clear()

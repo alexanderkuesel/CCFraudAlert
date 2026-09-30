@@ -138,3 +138,17 @@ def test_international_bank_name_is_not_a_foreign_hint():
     assert not p.foreign_hint
     p, _ = parse_email(msg("International transaction alert", "You spent $20.00 at DELI."), "USD")
     assert p.foreign_hint
+
+
+def test_bac_zero_amount_card_test():
+    """A $0.00 authorisation ("USD .00") is a classic card test before a larger charge. It must parse."""
+    p, name = bac(merchant="AMAZON.COM LLC", place=", Estados Unidos", amount="USD .00", date="Sep 29, 2026, 09:27")
+    assert name == "es-labels"
+    assert (p.amount, p.currency, p.merchant, p.country) == (Decimal("0.00"), "USD", "AMAZON.COM LLC", "Estados Unidos")
+
+
+@pytest.mark.parametrize("raw,expected", [("USD .00", "0.00"), ("$.99", "0.99"), ("USD 0.50", "0.50"), (".50 EUR", "0.50")])
+def test_amounts_without_leading_digit(raw, expected):
+    from fraudalert.ingest.parsers import _first_amount
+
+    assert _first_amount(raw, "USD")[0] == Decimal(expected)
