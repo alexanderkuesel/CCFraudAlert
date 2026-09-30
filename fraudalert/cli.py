@@ -25,6 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--reparse", action="store_true", help="also retry emails that failed to parse")
     r.add_argument("--reparse-all", action="store_true",
                    help="re-parse every stored email (after a parser update); keeps fraud/legit labels")
+    sub.add_parser("train", help="train the Isolation Forest anomaly model now and re-score everything")
     e = sub.add_parser("export-features", help="write feature vectors + labels to CSV for model training")
     e.add_argument("out", type=Path)
 
@@ -48,7 +49,24 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "watch":
         while True:
             print(pipeline.sync_inbox(), flush=True)
+            try:
+                if pipeline.maybe_retrain():
+                    print("retrained the anomaly model", flush=True)
+            except Exception:  # noqa: BLE001 - a training problem must not stop the worker
+                logging.exception("anomaly model retraining failed")
             time.sleep(args.interval)
+    elif args.cmd == "train":
+        from fraudalert.anomaly.training import NotEnoughData
+
+        try:
+            info = pipeline.retrain_anomaly_model()
+        except NotEnoughData as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        m = info["metrics"]
+        print(f"trained on {info['n_samples']} transactions; "
+              f"AUC (fraud vs legit) iforest={m['auc_iforest']} baseline={m['auc_baseline']}; "
+              f"{m['alarms_30d_at_threshold']} of {m['transactions_30d']} recent transactions score >= {m['alarm_threshold']}")
     elif args.cmd == "serve":
         import threading
 

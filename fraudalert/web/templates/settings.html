@@ -13,6 +13,38 @@
 </form>
 
 <div class="card">
+  <h3 style="margin-top:0">Anomaly model</h3>
+  {% if settings.detector != 'iforest' %}
+    <p class="muted">Using the statistical baseline (<code>FRAUDALERT_DETECTOR={{ settings.detector }}</code>).
+      Set <code>FRAUDALERT_DETECTOR=iforest</code> in <code>.env</code> to use the Isolation Forest.</p>
+  {% elif not model %}
+    <p><b>Isolation Forest: not trained yet.</b> Scores come from the statistical baseline until the model has
+      been trained on at least {{ min_samples }} transactions (you have {{ scored }}). The worker trains it
+      automatically once there's enough history, or train it now.</p>
+  {% else %}
+    {% set m = model.metrics %}
+    <p><b>Isolation Forest</b>, trained {{ model.trained_at | local }} on {{ model.n_samples }} transactions
+      (everything except what you marked fraud). The worker retrains it nightly when new transactions arrive.
+      Scores are percentiles: <b>0.97</b> = more unusual than 97% of your history.</p>
+    <table class="model-metrics">
+      <tr><td>Acknowledged so far</td><td>{{ m.labelled_fraud }} fraud · {{ m.labelled_legit }} legit</td></tr>
+      <tr><td title="Chance a random fraud scores higher than a random legit transaction. 0.5 = no better than a coin flip, 1.0 = perfect.">
+        Separates fraud from legit (AUC)</td>
+        <td>{% if m.auc_iforest is none %}<span class="muted">needs at least one fraud and one legit acknowledgement</span>
+            {% else %}Isolation Forest <b>{{ m.auc_iforest }}</b> · baseline {{ m.auc_baseline }}{% endif %}</td></tr>
+      <tr><td>Alarm load at ≥ {{ m.alarm_threshold }}</td>
+        <td>{{ m.alarms_30d_at_threshold }} of {{ m.transactions_30d }} transactions in the last 30 days
+          <span class="muted">(each raises a Low “Unusual pattern” alarm)</span></td></tr>
+    </table>
+    <p class="muted" style="margin-bottom:0">These numbers are a sanity check, not a benchmark: the legit transactions
+      were also part of the training data.</p>
+  {% endif %}
+  {% if settings.detector == 'iforest' %}
+    <form method="post" action="/model/train" style="margin-top:.75rem"><button class="btn">Retrain now</button></form>
+  {% endif %}
+</div>
+
+<div class="card">
   <h3 style="margin-top:0">From <code>.env</code></h3>
   <p class="muted">Change these in <code>.env</code> and restart (<code>docker compose up -d</code>).</p>
   <table>

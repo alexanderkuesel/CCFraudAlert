@@ -251,7 +251,7 @@ def test_new_builtin_rules_reach_existing_installs_once(db):
     with db.session_scope() as s:
         rules = {r.name: r.severity for r in s.scalars(select(Rule))}
     assert rules == {"Large or foreign purchase": "high", "Card test (zero/near-zero amount)": "high",
-                     "Charge after a card test": "high"}
+                     "Charge after a card test": "high", "Unusual pattern (anomaly model)": "low"}
     with db.session_scope() as s:
         s.delete(s.scalar(select(Rule).where(Rule.name == "Charge after a card test")))
     db.init_db()

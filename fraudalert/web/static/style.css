@@ -140,6 +140,10 @@ tr.row-normal { color: var(--muted); }
 th.sel, td.sel { width: 30px; padding-right: 0; }
 tr.selected td { background: rgba(93, 125, 156, .16); }
 
+.model-metrics { width: auto; margin: .25rem 0 .5rem; }
+.model-metrics td { border: 0; padding: .2rem 1.2rem .2rem 0; }
+.model-metrics td:first-child { color: var(--muted); }
+
 /* ---- comments ---- */
 .comment-cell { min-width: 130px; }
 .comment-form { display: flex; align-items: center; gap: .35rem; margin: 0; }

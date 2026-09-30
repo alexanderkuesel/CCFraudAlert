@@ -321,15 +321,32 @@ def create_app(init: bool = True) -> FastAPI:
         pipeline.reevaluate_all()
         return redirect("/rules", msg="Rule deleted.")
 
+    @app.post("/model/train")
+    def train_model():
+        from fraudalert.anomaly.training import NotEnoughData
+
+        try:
+            info = pipeline.retrain_anomaly_model()
+        except NotEnoughData as exc:
+            return redirect("/settings", error=f"Not trained yet: {exc}.")
+        return redirect("/settings", msg=f"Trained the anomaly model on {info['n_samples']} transactions "
+                                         "and re-scored your history.")
+
     @app.get("/settings")
     def settings_page(request: Request):
+        from fraudalert.anomaly.iforest import MIN_SAMPLES
+        from fraudalert.anomaly.training import latest_model_info
+
         settings = get_settings()
         with session_scope() as s:
             normal = prefs.normal_currencies(s, settings)
+            model = latest_model_info(s)
+            scored = s.scalar(select(func.count(Transaction.id)).where(Transaction.features.is_not(None)))
         return templates.TemplateResponse(request, "settings.html", {
             "normal": ", ".join(normal),
             "default_normal": ", ".join(prefs.default_normal_currencies(settings)),
             "settings": settings,
+            "model": model, "scored": scored, "min_samples": MIN_SAMPLES,
         })
 
     @app.post("/settings")

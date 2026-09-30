@@ -390,7 +390,43 @@ DEFAULT_RULES = [
         "severity": "high",
     },
 ]
+DEFAULT_RULES.append({
+    "key": "anomaly_model",
+    "name": "Unusual pattern (anomaly model)",
+    "description": "The anomaly model rates this more unusual than 97% of your history. Low priority: worth a look, "
+                   "but on its own not proof of anything.",
+    "match": "all",
+    "conditions": [{"field": "anomaly_score", "op": "gte", "value": 0.97}],
+    "severity": "low",
+})
 _SEEDED = "seeded_rules"
+
+
+def retrain_anomaly_model(settings: Settings | None = None) -> dict:
+    """Train a new Isolation Forest, then re-score every transaction with it. Returns the model info.
+    Raises training.NotEnoughData when there isn't enough history yet."""
+    from fraudalert.anomaly.training import latest_model_info, train_iforest
+
+    settings = settings or get_settings()
+    with session_scope() as session:
+        train_iforest(session)
+    reevaluate_all(settings)
+    with session_scope() as session:
+        return latest_model_info(session)
+
+
+def maybe_retrain(settings: Settings | None = None) -> bool:
+    """Nightly retraining for the worker: only when the Isolation Forest is in use and due."""
+    from fraudalert.anomaly.training import needs_retrain
+
+    settings = settings or get_settings()
+    if settings.detector != "iforest":
+        return False
+    with session_scope() as session:
+        due = needs_retrain(session)
+    if due:
+        retrain_anomaly_model(settings)
+    return due
 
 
 def seed_default_rules(session: Session) -> int:
