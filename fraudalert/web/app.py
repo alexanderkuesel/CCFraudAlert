@@ -23,6 +23,7 @@ from fraudalert.rules.engine import FIELDS, OPS, RuleError, RuleSpec, describe, 
 HERE = Path(__file__).parent
 PAGE_SIZE = 50
 SEVERITIES = ["low", "medium", "high"]
+COMMENT_MAX = 1000
 
 _basic = HTTPBasic(auto_error=False)
 
@@ -118,6 +119,19 @@ def create_app(init: bool = True) -> FastAPI:
             if not txn:
                 raise HTTPException(404)
             txn.label_fraud = value
+        return RedirectResponse(request.headers.get("referer") or "/", status_code=303)
+
+    @app.post("/transactions/{txn_id}/comment")
+    async def comment_transaction(txn_id: int, request: Request):
+        form = await request.form()
+        text = str(form.get("comment", "")).strip()[:COMMENT_MAX]
+        with session_scope() as s:
+            txn = s.get(Transaction, txn_id)
+            if not txn:
+                raise HTTPException(404)
+            txn.comment = text or None
+        if request.headers.get("x-requested-with") == "fetch":  # inline save from the table
+            return PlainTextResponse("saved")
         return RedirectResponse(request.headers.get("referer") or "/", status_code=303)
 
     @app.get("/rules")
@@ -239,7 +253,7 @@ def create_app(init: bool = True) -> FastAPI:
             "id": t.id, "occurred_at": t.occurred_at.isoformat(), "amount": str(t.amount),
             "currency": t.currency, "merchant": t.merchant, "card_last4": t.card_last4,
             "is_foreign": t.is_foreign, "anomaly_score": t.anomaly_score, "flagged": t.flagged,
-            "label_fraud": t.label_fraud, "alerts": [a.reason for a in t.alerts],
+            "label_fraud": t.label_fraud, "comment": t.comment, "alerts": [a.reason for a in t.alerts],
         }
 
     def _rule_json(r: Rule) -> dict:

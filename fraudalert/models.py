@@ -8,7 +8,6 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
-    Integer,
     Numeric,
     String,
     Text,
@@ -65,6 +64,7 @@ class Transaction(Base):
     flagged: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     # User feedback: None = unreviewed, True = confirmed fraud, False = legit. Future training labels.
     label_fraud: Mapped[bool | None] = mapped_column(Boolean)
+    comment: Mapped[str | None] = mapped_column(Text)  # your review note
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     email: Mapped[RawEmail | None] = relationship(back_populates="transaction")

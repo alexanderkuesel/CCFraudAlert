@@ -47,3 +47,19 @@ def test_sync_lock_is_shared_across_processes():
             assert not second
     with dbmod.try_advisory_lock(123) as again:
         assert again  # released on exit
+
+
+def test_init_db_adds_columns_missing_from_an_older_database(db):
+    """Databases created before `transactions.comment` existed get the column on startup."""
+    from sqlalchemy import inspect, text
+
+    from fraudalert.models import Transaction
+
+    engine = db.get_engine()
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE transactions DROP COLUMN comment"))
+    assert "comment" not in {c["name"] for c in inspect(engine).get_columns("transactions")}
+    db.init_db()
+    assert "comment" in {c["name"] for c in inspect(engine).get_columns("transactions")}
+    with db.session_scope() as s:
+        assert s.query(Transaction).count() == 0  # still queryable through the ORM
