@@ -15,6 +15,7 @@
     <a href="/" class="{{ 'active' if p == '/' }}">Transactions</a>
     <a href="/rules" class="{{ 'active' if p.startswith('/rules') }}">Rules</a>
     <a href="/emails" class="{{ 'active' if p.startswith('/emails') }}">Emails</a>
+    <a href="/settings" class="{{ 'active' if p.startswith('/settings') }}">Settings</a>
   </nav>
   <form method="post" action="/sync"><button class="primary">Sync inbox</button></form>
 </header>

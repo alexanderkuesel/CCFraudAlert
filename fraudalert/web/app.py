@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
-from fraudalert import pipeline
+from fraudalert import pipeline, prefs
 from fraudalert.config import get_settings
 from fraudalert.db import init_db, session_scope
 from fraudalert.models import RawEmail, Rule, SyncState, Transaction
@@ -96,6 +96,7 @@ def create_app(init: bool = True) -> FastAPI:
                 "unparsed": s.scalar(select(func.count(RawEmail.id)).where(RawEmail.parse_status == "failed")),
             }
             last_sync = s.get(SyncState, "last_imap_sync")
+            normal = set(prefs.normal_currencies(s, get_settings()))
         return templates.TemplateResponse(
             request,
             "transactions.html",
@@ -104,6 +105,7 @@ def create_app(init: bool = True) -> FastAPI:
                 "pages": max(1, -(-total // PAGE_SIZE)), "stats": stats,
                 "last_sync": _local(datetime.fromisoformat(last_sync.value)) if last_sync else None,
                 "tz": get_settings().timezone,
+                "normal": normal,
             },
         )
 
@@ -170,6 +172,29 @@ def create_app(init: bool = True) -> FastAPI:
         pipeline.reevaluate_all()
         return redirect("/rules", msg="Rule deleted.")
 
+    @app.get("/settings")
+    def settings_page(request: Request):
+        settings = get_settings()
+        with session_scope() as s:
+            normal = prefs.normal_currencies(s, settings)
+        return templates.TemplateResponse(request, "settings.html", {
+            "normal": ", ".join(normal),
+            "default_normal": ", ".join(prefs.default_normal_currencies(settings)),
+            "settings": settings,
+        })
+
+    @app.post("/settings")
+    async def save_settings(request: Request):
+        form = await request.form()
+        try:
+            codes = prefs.parse_currency_list(str(form.get("normal_currencies", "")))
+        except ValueError as exc:
+            return redirect("/settings", error=str(exc))
+        with session_scope() as s:
+            prefs.set_normal_currencies(s, codes)
+        r = pipeline.reevaluate_all()
+        return redirect("/settings", msg=f"Normal currencies: {', '.join(codes)}. Re-applied rules: {r.flagged} flagged.")
+
     @app.get("/emails")
     def emails_page(request: Request, status_: str = Query("failed", alias="status")):
         with session_scope() as s:
@@ -181,8 +206,13 @@ def create_app(init: bool = True) -> FastAPI:
 
     @app.post("/emails/reparse")
     def reparse():
-        r = pipeline.reevaluate_all(reparse_failed=True)
+        r = pipeline.reevaluate_all(reparse="failed")
         return redirect("/emails", msg=f"Re-parsed: {r.parsed} recovered, {r.failed} still failing.")
+
+    @app.post("/emails/reparse-all")
+    def reparse_all():
+        r = pipeline.reevaluate_all(reparse="all")
+        return redirect("/emails", msg=f"Re-parsed every email: {r.parsed} transactions, {r.failed} unparsed.")
 
     @app.post("/sync")
     def sync(background: BackgroundTasks):

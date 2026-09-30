@@ -78,3 +78,31 @@ def test_refuses_network_exposure_without_password():
     assert exposure_problem(local, "0.0.0.0", in_container=True) is None  # docker publishes on loopback only
     assert exposure_problem(local, "0.0.0.0", in_container=False)  # bare `serve --host 0.0.0.0`
     assert exposure_problem(local, "127.0.0.1", in_container=False) is None
+
+
+def test_reparse_all_button(db, tmp_path):
+    from .bac import bac_eml
+
+    p = tmp_path / "bac.eml"
+    p.write_bytes(bac_eml(datetime.now(timezone.utc) - timedelta(days=1)))
+    pipeline.import_eml_files([p])
+    client = TestClient(create_app(init=False))
+    assert "Re-parse all emails" in client.get("/emails").text
+    r = client.post("/emails/reparse-all")
+    assert r.status_code == 200 and "1 transactions, 0 unparsed" in r.text
+
+
+def test_settings_page_normal_currencies(db):
+    from fraudalert import prefs
+    from fraudalert.config import get_settings
+
+    client = TestClient(create_app(init=False))
+    assert "Normal currencies" in client.get("/settings").text
+    r = client.post("/settings", data={"normal_currencies": "crc, usd"})
+    assert r.status_code == 200 and "Normal currencies: CRC, USD" in r.text
+    with db.session_scope() as s:
+        assert prefs.normal_currencies(s, get_settings()) == ["CRC", "USD"]
+    r = client.post("/settings", data={"normal_currencies": "colones"})
+    assert "not a 3-letter currency code: COLONES" in r.text
+    with db.session_scope() as s:
+        assert prefs.normal_currencies(s, get_settings()) == ["CRC", "USD"]  # unchanged

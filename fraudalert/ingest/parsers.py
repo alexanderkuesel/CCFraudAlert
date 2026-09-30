@@ -25,7 +25,8 @@ class ParsedTransaction:
     merchant: str
     occurred_at: datetime
     card_last4: str | None = None
-    foreign_hint: bool = False  # the email itself says "foreign"/"international"
+    foreign_hint: bool = False  # the email itself says "foreign transaction" etc.
+    country: str | None = None  # where the purchase happened, when the email says
 
 
 # Symbols are checked longest-first so "US$" wins over "$".
@@ -33,12 +34,13 @@ SYMBOLS = {
     "US$": "USD", "U$S": "USD", "CA$": "CAD", "C$": "CAD", "AU$": "AUD", "A$": "AUD",
     "NZ$": "NZD", "HK$": "HKD", "S$": "SGD", "MX$": "MXN", "R$": "BRL",
     "€": "EUR", "£": "GBP", "¥": "JPY", "₹": "INR", "₩": "KRW", "₪": "ILS", "₺": "TRY",
-    "₱": "PHP", "₫": "VND", "฿": "THB", "CHF": "CHF", "$": None,  # "$" -> home dollar
+    "₱": "PHP", "₫": "VND", "฿": "THB", "₡": "CRC", "CHF": "CHF", "$": None,  # "$" -> home dollar
 }
 ISO_CODES = {
     "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "NZD", "CHF", "CNY", "HKD", "SGD", "INR", "MXN",
     "BRL", "KRW", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "TRY", "ILS", "ZAR", "THB", "PHP",
     "IDR", "MYR", "VND", "AED", "SAR", "ARS", "CLP", "COP", "PEN", "TWD", "RUB", "EGP", "MAD",
+    "CRC", "GTQ", "HNL", "NIO", "PAB", "DOP", "UYU", "BOB", "PYG",
 }
 
 _NUM = r"\d{1,3}(?:[,.' ]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?"
@@ -48,7 +50,7 @@ AMOUNT_PATTERNS = [
     re.compile(rf"(?P<sym>{_SYM_RE})\s?(?P<num>{_NUM})"),
     re.compile(rf"\b(?P<code>{_CODES_RE})\s?(?P<num>{_NUM})"),
     re.compile(rf"(?P<num>{_NUM})\s?(?P<code>{_CODES_RE})\b"),
-    re.compile(rf"(?P<num>{_NUM})\s?(?P<sym>€|£|¥|₹)"),
+    re.compile(rf"(?P<num>{_NUM})\s?(?P<sym>€|£|¥|₹|₡)"),
 ]
 
 LABEL_RE = r"(?:transaction\s+)?(?:amount|total|charge|purchase amount)"
@@ -69,12 +71,22 @@ DATE_LABEL_RE = re.compile(
     r"^\s*(?:date|transaction date|date and time|time)\s*:?\s*(?:\n\s*)?(?P<d>[^\n]{6,60})$",
     re.IGNORECASE | re.MULTILINE,
 )
-FOREIGN_RE = re.compile(r"\b(foreign|international|outside (?:the )?(?:US|U\.S\.|country))\b", re.I)
+FOREIGN_RE = re.compile(
+    r"\b(foreign (?:transaction|purchase|charge|currency)|international (?:transaction|purchase|charge)|"
+    r"outside (?:the )?(?:US|U\.S\.|country))\b",
+    re.I,
+)
 DATE_FORMATS = [
+    "%b %d, %Y, %H:%M", "%b %d, %Y, %I:%M %p",
     "%b %d, %Y at %I:%M %p", "%B %d, %Y at %I:%M %p", "%b %d, %Y %I:%M %p", "%B %d, %Y %I:%M %p",
     "%b %d, %Y", "%B %d, %Y", "%m/%d/%Y %I:%M %p", "%m/%d/%Y %H:%M", "%m/%d/%Y", "%Y-%m-%d %H:%M:%S",
-    "%Y-%m-%d %H:%M", "%Y-%m-%d", "%d %b %Y %H:%M", "%d %b %Y", "%d.%m.%Y %H:%M", "%d.%m.%Y",
+    "%Y-%m-%d %H:%M", "%Y-%m-%d", "%d %b %Y, %H:%M", "%d %b %Y %H:%M", "%d %b %Y", "%d.%m.%Y %H:%M", "%d.%m.%Y",
 ]
+DAY_FIRST_FORMATS = ["%d/%m/%Y %H:%M", "%d/%m/%Y", "%d-%m-%Y - %H:%M", "%d-%m-%Y %H:%M", "%d-%m-%Y"]
+_SPANISH_MONTHS = {
+    "ene": "Jan", "feb": "Feb", "mar": "Mar", "abr": "Apr", "may": "May", "jun": "Jun", "jul": "Jul",
+    "ago": "Aug", "sep": "Sep", "set": "Sep", "oct": "Oct", "nov": "Nov", "dic": "Dec",
+}
 _STOP_MERCHANTS = {"your", "you", "the", "a", "an", "us", "chase", "your account", "your card"}
 
 
@@ -144,10 +156,15 @@ def find_card(text: str) -> str | None:
     return (m.group("d") or m.group("d2")) if m else None
 
 
-def parse_date(raw: str) -> datetime | None:
+def parse_date(raw: str, day_first: bool = False) -> datetime | None:
+    """Parse a date as written in the email. Returns a naive datetime (the pipeline treats it as
+    local time in FRAUDALERT_TIMEZONE)."""
     s = re.sub(r"\s+", " ", raw).strip()
     s = re.sub(r"\s+(?:[A-Z]{2,4}|UTC[+-]?\d*)$", "", s)  # drop trailing TZ abbreviation ("ET", "EST")
-    for fmt in DATE_FORMATS:
+    s = re.sub(r"\b([A-Za-z]{3})[a-z]*\.?(?=\s)", lambda m: _SPANISH_MONTHS.get(m.group(1).lower(), m.group(0)), s)
+    s = re.sub(r"\b(a\.\s?m\.|p\.\s?m\.)", lambda m: "AM" if m.group(1)[0] == "a" else "PM", s)
+    formats = DAY_FIRST_FORMATS + DATE_FORMATS if day_first else DATE_FORMATS + DAY_FIRST_FORMATS
+    for fmt in formats:
         try:
             return datetime.strptime(s, fmt)
         except ValueError:
@@ -157,6 +174,9 @@ def parse_date(raw: str) -> datetime | None:
 
 class BaseParser:
     name = "base"
+    # A fallback parser only runs when no specific parser recognised the email. Once a specific
+    # parser matches, its verdict is final: falling back to heuristics produced junk transactions.
+    fallback = False
 
     def matches(self, msg: EmailMessage) -> bool:  # pragma: no cover - interface
         raise NotImplementedError
@@ -169,6 +189,7 @@ class GenericAlertParser(BaseParser):
     """Heuristic parser for typical 'You made a $X purchase at Y' alert emails."""
 
     name = "generic"
+    fallback = True
     NOT_TRANSACTION = re.compile(
         r"\b(statement is (?:ready|available)|payment (?:is )?due|autopay|payment (?:received|posted)|"
         r"password|sign[- ]in|verify your|credit limit increase)\b",
@@ -187,8 +208,6 @@ class GenericAlertParser(BaseParser):
         m = DATE_LABEL_RE.search(msg.body)
         if m:
             occurred_at = parse_date(m.group("d"))
-            if occurred_at and msg.received_at and occurred_at.tzinfo is None:
-                occurred_at = occurred_at.replace(tzinfo=msg.received_at.tzinfo)
         occurred_at = occurred_at or msg.received_at
         if occurred_at is None:
             raise ParseError("no transaction date and no email date")
@@ -202,14 +221,101 @@ class GenericAlertParser(BaseParser):
         )
 
 
-PARSERS: list[BaseParser] = [GenericAlertParser()]
+def _fold(s: str) -> str:
+    """Lower-case and strip accents: 'Autorización' -> 'autorizacion'."""
+    import unicodedata
+
+    return "".join(c for c in unicodedata.normalize("NFD", s.casefold()) if unicodedata.category(c) != "Mn")
+
+
+class SpanishAlertParser(BaseParser):
+    """Label/value alerts in Spanish, as sent by BAC Credomatic and similar Latin American banks:
+
+        Comercio:            GLOBAL-E
+        Ciudad y país:       , Reino Unido
+        Fecha:               Sep 29, 2026, 17:01
+        AMEX:                ***********1234
+        Tipo de Transacción: COMPRA
+        Monto:               USD 154.64
+
+    Values may follow the label on the same line (tab separated) or on the next line (HTML tables).
+    """
+
+    name = "es-labels"
+    LABELS = {
+        "comercio": "merchant", "establecimiento": "merchant",
+        "ciudad y pais": "location", "pais": "location", "lugar": "location",
+        "fecha": "date", "fecha y hora": "date",
+        "monto": "amount", "importe": "amount", "monto de la transaccion": "amount",
+        "tipo de transaccion": "type", "tipo": "type",
+        "tarjeta": "card", "amex": "card", "visa": "card", "mastercard": "card", "master card": "card",
+        "autorizacion": "auth", "referencia": "ref",
+    }
+    LABEL_LINE = re.compile(r"^\s*([^\n:]{2,30}?)\s*:\s*(.*)$")
+    NON_PURCHASE = re.compile(r"devoluci|anulaci|revers|reembols|nota de cr|pago recibido|abono", re.I)
+    SUBJECT_MERCHANT = re.compile(r"transacci[oó]n\s+(?P<m>.+?)\s+\d{1,2}-\d{1,2}-\d{4}", re.I)
+
+    def fields(self, text: str) -> dict[str, str]:
+        lines = [line.strip() for line in text.splitlines()]
+        out: dict[str, str] = {}
+        for i, line in enumerate(lines):
+            m = self.LABEL_LINE.match(line)
+            key = self.LABELS.get(_fold(m.group(1))) if m else None
+            if not key or key in out:
+                continue
+            value = m.group(2).strip()
+            if not value and i + 1 < len(lines):
+                nxt = self.LABEL_LINE.match(lines[i + 1])
+                if not (nxt and _fold(nxt.group(1)) in self.LABELS):
+                    value = lines[i + 1]
+            out[key] = value
+        return out
+
+    def matches(self, msg: EmailMessage) -> bool:
+        f = self.fields(msg.body)
+        return "amount" in f and ("merchant" in f or "type" in f)
+
+    def parse(self, msg: EmailMessage, home_currency: str) -> ParsedTransaction:
+        f = self.fields(msg.body)
+        kind = f.get("type", "")
+        if self.NON_PURCHASE.search(kind):
+            raise ParseError(f"not a purchase (Tipo de Transacción: {kind})")
+        found = _first_amount(f.get("amount", ""), home_currency)
+        if not found:
+            raise ParseError(f"no amount in {f.get('amount')!r}")
+        amount, currency = found
+
+        occurred_at = parse_date(f["date"], day_first=True) if f.get("date") else None
+        if occurred_at is None:
+            m = re.search(r"\d{1,2}-\d{1,2}-\d{4}\s*-\s*\d{1,2}:\d{2}", msg.subject)
+            occurred_at = parse_date(m.group(0), day_first=True) if m else msg.received_at
+        if occurred_at is None:
+            raise ParseError("no transaction date and no email date")
+
+        merchant = f.get("merchant", "")
+        if not merchant:
+            m = self.SUBJECT_MERCHANT.search(msg.subject)
+            merchant = m.group("m") if m else ""
+        card = re.search(r"(\d{4})\D*$", f.get("card", ""))
+        country = f.get("location", "").rsplit(",", 1)[-1].strip() or None
+        return ParsedTransaction(
+            amount=amount,
+            currency=currency,
+            merchant=_clean_merchant(merchant),
+            occurred_at=occurred_at,
+            card_last4=card.group(1) if card else find_card(msg.body),
+            country=country,
+        )
+
+
+PARSERS: list[BaseParser] = [SpanishAlertParser(), GenericAlertParser()]
 
 
 def parse_email(msg: EmailMessage, home_currency: str) -> tuple[ParsedTransaction, str]:
+    specific = [p for p in PARSERS if not p.fallback and p.matches(msg)]
+    candidates = specific or [p for p in PARSERS if p.fallback and p.matches(msg)]
     errors = []
-    for parser in PARSERS:
-        if not parser.matches(msg):
-            continue
+    for parser in candidates:
         try:
             return parser.parse(msg, home_currency), parser.name
         except ParseError as exc:

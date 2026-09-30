@@ -85,3 +85,56 @@ def test_non_transaction_email_is_rejected():
 
 def test_html_to_text_skips_style():
     assert html_to_text("<style>p{}</style><p>Hi&nbsp;there</p><br>x") == "Hi there\nx"
+
+
+# ---- BAC Credomatic / Spanish label alerts ----
+
+from .bac import SENDER, bac_eml  # noqa: E402
+
+BAC_SENT = datetime(2026, 9, 29, 23, 1, 30, tzinfo=timezone.utc)
+
+
+def bac(**kw):
+    return parse_email(parse_rfc822(bac_eml(BAC_SENT, **kw)), "USD")
+
+
+def test_bac_usd_purchase_abroad():
+    p, name = bac()
+    assert name == "es-labels"
+    assert (p.amount, p.currency, p.merchant, p.card_last4) == (Decimal("154.64"), "USD", "GLOBAL-E", "4321")
+    assert p.country == "Reino Unido"
+    assert p.occurred_at == datetime(2026, 9, 29, 17, 1)  # naive: local time as written in the email
+    assert not p.foreign_hint  # "BAC INTERNATIONAL BANK" in the footer is not a foreign-transaction phrase
+
+
+def test_bac_colones_local_purchase():
+    p, _ = bac(merchant="FAST MARKET", place="HEREDIA, Costa Rica", amount="CRC 12,500.00", date="Sep 11, 2026, 17:22",
+               card=("VISA", "************9876"))
+    assert (p.amount, p.currency, p.merchant, p.country, p.card_last4) == (
+        Decimal("12500.00"), "CRC", "FAST MARKET", "Costa Rica", "9876")
+    p, _ = bac(amount="₡12.500,00")
+    assert (p.amount, p.currency) == (Decimal("12500.00"), "CRC")
+
+
+def test_bac_pasted_text_with_tabs_and_spanish_month():
+    body = "Hola NAME\nComercio:\tUBER\nCiudad y país:\tSAN JOSE, Costa Rica\nFecha:\t2 ago. 2026, 08:15\n" \
+           "Tipo de Transacción:\tCOMPRA\nMonto:\tCRC 3,450.00"
+    p, name = parse_email(EmailMessage("<i>", SENDER, "Notificación de transacción UBER", BAC_SENT, body), "USD")
+    assert (name, p.merchant, p.amount, p.occurred_at) == ("es-labels", "UBER", Decimal("3450.00"), datetime(2026, 8, 2, 8, 15))
+
+
+def test_bac_refund_is_not_a_purchase():
+    with pytest.raises(ParseError, match="not a purchase"):
+        bac(kind="DEVOLUCION")
+
+
+def test_bac_date_falls_back_to_subject():
+    p, _ = bac(date="")
+    assert p.occurred_at == datetime(2026, 9, 29, 23, 1)  # subject is built from the send time here
+
+
+def test_international_bank_name_is_not_a_foreign_hint():
+    p, _ = parse_email(msg("Alert", "You spent $20.00 at DELI. Thanks, Big International Bank"), "USD")
+    assert not p.foreign_hint
+    p, _ = parse_email(msg("International transaction alert", "You spent $20.00 at DELI."), "USD")
+    assert p.foreign_hint
