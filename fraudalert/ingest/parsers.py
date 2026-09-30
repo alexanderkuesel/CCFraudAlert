@@ -43,7 +43,8 @@ ISO_CODES = {
     "CRC", "GTQ", "HNL", "NIO", "PAB", "DOP", "UYU", "BOB", "PYG",
 }
 
-_NUM = r"\d{1,3}(?:[,.' ]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?"
+# 1,234.56 / 1.234,56 / 1234 / and ".00" (banks print zero-amount authorisations as "USD .00")
+_NUM = r"\d{1,3}(?:[,.' ]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?|\.\d{2}"
 _SYM_RE = "|".join(re.escape(s) for s in sorted(SYMBOLS, key=len, reverse=True))
 _CODES_RE = "|".join(sorted(ISO_CODES))
 AMOUNT_PATTERNS = [

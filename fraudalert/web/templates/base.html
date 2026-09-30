@@ -3,26 +3,50 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Fraud Alert{% endblock %}</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+  <title>{% block title %}Alarm summary{% endblock %} · CC Transaction Alarms</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='1' y='1' width='14' height='14' rx='2' fill='%23c62828'/><text x='8' y='12.5' font-size='12' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>!</text></svg>">
   <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
 </head>
 <body>
-<header>
-  <span class="brand">🛡️ Fraud Alert</span>
+{% set p = request.url.path %}
+<header class="hmi-header">
+  <div class="brand">
+    <span class="brand-name">{{ APP_NAME }}</span>
+    <span class="passive-tag" title="Monitors and alarms only. It never blocks a card, contacts your bank or moves money.">Passive monitor</span>
+  </div>
   <nav>
-    {% set p = request.url.path %}
-    <a href="/" class="{{ 'active' if p == '/' }}">Transactions</a>
-    <a href="/rules" class="{{ 'active' if p.startswith('/rules') }}">Rules</a>
+    <a href="/" class="{{ 'active' if p == '/' }}">Alarm summary</a>
+    <a href="/rules" class="{{ 'active' if p.startswith('/rules') }}">Alarm rules</a>
     <a href="/emails" class="{{ 'active' if p.startswith('/emails') }}">Emails</a>
     <a href="/settings" class="{{ 'active' if p.startswith('/settings') }}">Settings</a>
   </nav>
-  <form method="post" action="/sync"><button class="primary">Sync inbox</button></form>
+  <form method="post" action="/sync"><button class="btn">Sync inbox</button></form>
 </header>
+
+{% set b = alarm_banner() %}
+<a class="alarm-banner {{ 'has-unack' if b.total else 'all-clear' }}" href="/?view=unack" aria-label="Unacknowledged alarms">
+  {% if b.total %}
+    <span class="banner-label">Unacknowledged alarms</span>
+    {% for rank in (1, 2, 3) %}
+      <span class="banner-count {{ 'zero' if not b.counts[rank] }}">
+        <span class="pri pri-{{ rank }} {{ 'blink' if b.counts[rank] }}" aria-hidden="true">{{ rank }}</span>
+        <b>{{ b.counts[rank] }}</b> {{ PRIORITY_NAME[rank] }}
+      </span>
+    {% endfor %}
+  {% else %}
+    <span class="banner-label">No unacknowledged alarms</span>
+  {% endif %}
+</a>
+
 <main>
   {% if request.query_params.get('msg') %}<div class="flash">{{ request.query_params.get('msg') }}</div>{% endif %}
   {% if request.query_params.get('error') %}<div class="flash error">{{ request.query_params.get('error') }}</div>{% endif %}
   {% block content %}{% endblock %}
 </main>
+<footer class="hmi-footer">
+  {{ APP_NAME }} · a <b>passive</b> monitor: it reads your bank's alert emails (read-only) and raises alarms.
+  It never blocks cards, contacts your bank or moves money; acting on an alarm is up to you.
+  Alarm handling follows ISA-18.2; screen design follows ISA-101 (grey by default, colour only for alarms).
+</footer>
 </body>
 </html>

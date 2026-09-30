@@ -22,6 +22,8 @@ FIELDS: dict[str, type] = {
     "card_last4": str,
     "is_foreign": bool,  # bought outside your home country, or in a currency you don't normally use
     "unusual_currency": bool,  # currency not in your normal currencies (Settings page)
+    "is_test_amount": bool,  # at or below FRAUDALERT_TEST_AMOUNT_MAX (e.g. a $0.00 authorisation)
+    "follows_test": bool,  # same card had a test-sized charge within FRAUDALERT_TEST_FOLLOWUP_HOURS
     "hour": int,  # 0-23, local time
     "weekday": int,  # 0=Mon .. 6=Sun
     "anomaly_score": float,  # 0..1 from the anomaly detector, None until enough history

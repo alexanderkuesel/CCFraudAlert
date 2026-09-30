@@ -54,8 +54,21 @@ def init_db() -> None:
         Base.metadata.create_all(conn)
         _add_missing_columns(conn)
         with Session(bind=conn) as session:
-            seed_default_rules(session)
+            added = seed_default_rules(session)
             session.flush()
+    if added and _has_transactions():
+        # New built-in rules (after an upgrade): apply them to the transactions already stored.
+        from fraudalert.pipeline import reevaluate_all
+
+        log.info("added %d built-in rule(s); re-evaluating stored transactions", added)
+        reevaluate_all()
+
+
+def _has_transactions() -> bool:
+    from fraudalert.models import Transaction
+
+    with session_scope() as s:
+        return s.query(Transaction.id).first() is not None
 
 
 def _add_missing_columns(conn) -> None:

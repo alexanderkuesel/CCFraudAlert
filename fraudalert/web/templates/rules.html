@@ -1,20 +1,34 @@
 {% extends "base.html" %}
-{% block title %}Rules · Fraud Alert{% endblock %}
+{% block title %}Alarm rules{% endblock %}
 {% block content %}
+<p class="muted" style="margin-top:0">Each rule is an alarm definition. Following ISA-18.2 rationalization, every alarm should
+  say why it exists (the rationale) and carry a priority that matches how quickly you need to act:
+  <span class="pri pri-sm pri-1">1</span><b>High</b>, act now (e.g. a card test) ·
+  <span class="pri pri-sm pri-2">2</span><b>Medium</b>, check today ·
+  <span class="pri pri-sm pri-3">3</span><b>Low</b>, review when convenient.
+  Keep High rare (about 5% of alarms) so it keeps its meaning.</p>
 <div class="table-wrap" style="margin-bottom:1.25rem">
 <table>
-  <thead><tr><th>Rule</th><th>Logic</th><th>Severity</th><th>Hits</th><th>Status</th><th></th></tr></thead>
+  <thead><tr><th>Priority</th><th>Alarm · rationale</th><th>Logic</th><th>Hits</th><th>Status</th><th></th></tr></thead>
   <tbody>
   {% for r in rules %}
     <tr>
+      <td class="nowrap">
+        <form class="inline" method="post" action="/rules/{{ r.id }}/priority">
+          <span class="pri pri-{{ PRIORITY_RANK.get(r.severity, 3) }}" aria-hidden="true">{{ PRIORITY_RANK.get(r.severity, 3) }}</span>
+          <select name="severity" aria-label="Priority for {{ r.name }}" onchange="this.form.submit()">
+            {% for sev in severities %}<option value="{{ sev }}" {{ 'selected' if sev == r.severity }}>{{ PRIORITY_NAME[PRIORITY_RANK[sev]] }}</option>{% endfor %}
+          </select>
+          <noscript><button class="btn btn-sm">Set</button></noscript>
+        </form>
+      </td>
       <td><b>{{ r.name }}</b>{% if r.description %}<div class="muted">{{ r.description }}</div>{% endif %}</td>
       <td><code>{{ describe(r) }}</code></td>
-      <td><span class="pill {{ r.severity }}">{{ r.severity }}</span></td>
       <td class="num">{{ counts.get(r.id, 0) }}</td>
       <td>{{ 'enabled' if r.enabled else 'disabled' }}</td>
       <td style="white-space:nowrap">
         <form class="inline" method="post" action="/rules/{{ r.id }}/toggle"><button class="link">{{ 'Disable' if r.enabled else 'Enable' }}</button></form>
-        <form class="inline" method="post" action="/rules/{{ r.id }}/delete" onsubmit="return confirm('Delete rule “{{ r.name }}”?')"><button class="link" style="color:var(--danger)">Delete</button></form>
+        <form class="inline" method="post" action="/rules/{{ r.id }}/delete" onsubmit="return confirm('Delete rule “{{ r.name }}”?')"><button class="link" style="color:var(--p1)">Delete</button></form>
       </td>
     </tr>
   {% else %}
@@ -25,14 +39,14 @@
 </div>
 
 <form class="card" method="post" action="/rules">
-  <h3 style="margin-top:0">New rule</h3>
+  <h3 style="margin-top:0">New alarm rule</h3>
   <div class="grid">
     <div><label>Name</label><input name="name" required style="width:100%" placeholder="Big purchase abroad"></div>
-    <div><label>Description</label><input name="description" style="width:100%"></div>
+    <div><label>Rationale (why this alarm matters)</label><input name="description" style="width:100%"></div>
     <div><label>Flag when</label>
       <select name="match"><option value="all">ALL conditions match</option><option value="any">ANY condition matches</option></select></div>
-    <div><label>Severity</label>
-      <select name="severity">{% for s in severities %}<option {{ 'selected' if s == 'medium' }}>{{ s }}</option>{% endfor %}</select></div>
+    <div><label>Priority</label>
+      <select name="severity">{% for sev in severities %}<option value="{{ sev }}" {{ 'selected' if sev == 'low' }}>{{ PRIORITY_NAME[PRIORITY_RANK[sev]] }}</option>{% endfor %}</select></div>
   </div>
   <label>Conditions</label>
   <div id="conds">
@@ -45,7 +59,8 @@
   <p><button type="button" onclick="addCond()">+ condition</button> <button class="primary">Save &amp; apply to history</button></p>
   <p class="muted" style="margin-bottom:0">
     Fields: <code>amount</code>, <code>currency</code> (e.g. EUR), <code>merchant</code>, <code>card_last4</code>,
-    <code>is_foreign</code> (true/false), <code>hour</code> (0–23, local), <code>weekday</code> (0=Mon),
+    <code>is_foreign</code> (true/false), <code>hour</code> (0–23, local), <code>weekday</code> (0=Mon), <code>is_test_amount</code> / <code>follows_test</code> (card-test detection),
+    <code>unusual_currency</code>, <code>amount_original</code>,
     <code>anomaly_score</code> (0–1, from the anomaly model).
   </p>
 </form>
