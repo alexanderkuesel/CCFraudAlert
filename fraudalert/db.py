@@ -30,8 +30,9 @@ def get_engine():
     return _engine
 
 
-# Arbitrary constant identifying the schema-setup advisory lock.
+# Arbitrary constants identifying Postgres advisory locks.
 _INIT_LOCK_KEY = 0x46524155  # "FRAU"
+SYNC_LOCK_KEY = 0x53594E43  # "SYNC"
 
 
 def init_db() -> None:
@@ -66,3 +67,24 @@ def session_scope() -> Iterator[Session]:
         raise
     finally:
         session.close()
+
+
+@contextmanager
+def try_advisory_lock(key: int) -> Iterator[bool]:
+    """Non-blocking lock shared by every process using the database (web, worker, CLI).
+
+    Yields True if acquired. On SQLite (tests, single process) it always succeeds.
+    """
+    engine = get_engine()
+    if engine.dialect.name != "postgresql":
+        yield True
+        return
+    with engine.connect() as conn:
+        acquired = bool(conn.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": key}).scalar())
+        conn.commit()
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
+                conn.commit()

@@ -65,3 +65,44 @@ def test_webhook_only_for_recent(db, tmp_path, monkeypatch):
         write(tmp_path, "new.eml", "Alert", "You spent $999.00 at NEW STORE.", NOW - timedelta(hours=1)),
     ])
     assert calls == ["NEW STORE"]
+
+
+def test_concurrent_ingest_of_same_email_is_not_an_error(db, tmp_path, monkeypatch):
+    """Worker and a manual `fraudalert sync` can fetch the same email at the same moment: both pass
+    the "already stored?" check, then race to insert it. The loser must skip it, not crash."""
+    import threading
+
+    from fraudalert.anomaly import get_detector
+    from fraudalert.config import get_settings
+    from fraudalert.ingest.message import parse_rfc822
+
+    msg = parse_rfc822(make_eml("Alert", "You spent $20.00 at RACE CAFE.", NOW - timedelta(hours=1)))
+    barrier = threading.Barrier(2, timeout=10)
+
+    class RacingRawEmail(pipeline.RawEmail):
+        def __init__(self, **kw):
+            barrier.wait()  # both threads have passed the existence check before either inserts
+            super().__init__(**kw)
+
+    monkeypatch.setattr(pipeline, "RawEmail", RacingRawEmail)
+    results, errors = [], []
+
+    def ingest():
+        r = pipeline.SyncResult()
+        try:
+            with db.session_scope() as s:
+                pipeline.ingest_message(s, msg, get_settings(), get_detector(), pipeline.load_rules(s), r)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+        results.append(r)
+
+    threads = [threading.Thread(target=ingest) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    monkeypatch.undo()
+    assert errors == []
+    assert sorted(r.fetched for r in results) == [0, 1]
+    with db.session_scope() as s:
+        assert len(s.scalars(select(Transaction)).all()) == 1

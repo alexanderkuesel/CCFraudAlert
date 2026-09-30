@@ -8,12 +8,13 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from fraudalert.anomaly import AnomalyDetector, get_detector
 from fraudalert.anomaly.features import TxnView, compute_features
 from fraudalert.config import Settings, get_settings
-from fraudalert.db import session_scope
+from fraudalert.db import SYNC_LOCK_KEY, session_scope, try_advisory_lock
 from fraudalert.ingest.message import EmailMessage, parse_rfc822
 from fraudalert.ingest.parsers import ParseError, parse_email
 from fraudalert.models import Alert, RawEmail, Rule, SyncState, Transaction
@@ -110,7 +111,6 @@ def ingest_message(
 ) -> Transaction | None:
     if session.scalar(select(RawEmail.id).where(RawEmail.message_id == msg.message_id)):
         return None
-    result.fetched += 1
     raw = RawEmail(
         message_id=msg.message_id,
         sender=msg.sender[:512],
@@ -118,8 +118,15 @@ def ingest_message(
         received_at=msg.received_at,
         body=msg.body,
     )
-    session.add(raw)
-    session.flush()
+    try:
+        with session.begin_nested():  # savepoint: a duplicate must not poison the outer transaction
+            session.add(raw)
+            session.flush()
+    except IntegrityError:
+        # Another process stored this email between our check and the insert.
+        log.info("skipping %s: already stored by another process", msg.message_id)
+        return None
+    result.fetched += 1
     return _parse_into_transaction(session, raw, settings, detector, rules, result)
 
 
@@ -171,14 +178,29 @@ def _set_state(session: Session, key: str, value: str) -> None:
 
 
 def sync_inbox(settings: Settings | None = None) -> SyncResult:
-    """Pull new bank emails over IMAP and process them. Safe to call repeatedly."""
-    from fraudalert.ingest.imap_client import fetch_messages
-
+    """Pull new bank emails over IMAP and process them. Safe to call repeatedly and concurrently."""
     settings = settings or get_settings()
     result = SyncResult()
     if not _sync_lock.acquire(blocking=False):
         result.errors.append("a sync is already running")
         return result
+    try:
+        # The in-process lock covers the web UI's button; this one covers other processes
+        # (the worker container vs. a manual `fraudalert sync`).
+        with try_advisory_lock(SYNC_LOCK_KEY) as acquired:
+            if not acquired:
+                result.errors.append("a sync is already running in another process (e.g. the worker)")
+                return result
+            _sync(settings, result)
+    finally:
+        _sync_lock.release()
+    log.info("sync: %s", result)
+    return result
+
+
+def _sync(settings: Settings, result: SyncResult) -> None:
+    from fraudalert.ingest.imap_client import fetch_messages
+
     try:
         started = datetime.now(timezone.utc)
         with session_scope() as session:
@@ -207,10 +229,6 @@ def sync_inbox(settings: Settings | None = None) -> SyncResult:
     except Exception as exc:  # noqa: BLE001
         log.exception("sync failed")
         result.errors.append(str(exc))
-    finally:
-        _sync_lock.release()
-    log.info("sync: %s", result)
-    return result
 
 
 def import_eml_files(paths: list[Path], settings: Settings | None = None) -> SyncResult:
