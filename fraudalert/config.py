@@ -17,8 +17,10 @@ class Settings(BaseSettings):
     subject_filter: str = ""
     lookback_days: int = 90
 
-    home_currency: str = "USD"
-    timezone: str = "America/New_York"  # used for hour-of-day in rules and features
+    home_currency: str = "USD"  # rules and anomaly features compare amounts in this currency
+    home_country: str = ""  # e.g. "Costa Rica"; when the email names a country, others count as foreign
+    fx_rates: str = ""  # overrides for fraudalert/fx.py, e.g. "CRC=0.00195" (1 CRC in home currency)
+    timezone: str = "America/New_York"  # your local time: email dates, hour-of-day rules and features
     detector: str = "baseline"
     notify_webhook_url: str = ""
 

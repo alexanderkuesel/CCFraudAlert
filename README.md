@@ -64,11 +64,12 @@ A rule is a list of conditions joined by **ALL** (AND) or **ANY** (OR). The defa
 
 | field           | type   | notes                                                      |
 |-----------------|--------|------------------------------------------------------------|
-| `amount`        | number | in the transaction's own currency                          |
+| `amount`        | number | converted to `FRAUDALERT_HOME_CURRENCY` (approximate rates, see `fraudalert/fx.py`) |
+| `amount_original` | number | as charged, in `currency`                                |
 | `currency`      | text   | ISO code, e.g. `EUR`                                       |
 | `merchant`      | text   | case-insensitive                                           |
 | `card_last4`    | text   |                                                            |
-| `is_foreign`    | bool   | currency ≠ `FRAUDALERT_HOME_CURRENCY`, or the email says "foreign/international" |
+| `is_foreign`    | bool   | the purchase country ≠ `FRAUDALERT_HOME_COUNTRY` when the email names one; otherwise currency ≠ home currency, or the email says "foreign transaction" |
 | `hour`          | number | 0–23 in `FRAUDALERT_TIMEZONE`                              |
 | `weekday`       | number | 0 = Monday                                                 |
 | `anomaly_score` | number | 0–1 from the anomaly detector (empty until ~10 transactions of history) |
@@ -121,9 +122,25 @@ MERCHANT"), labelled fields ("Merchant: …", "Amount: …"), HTML tables, curre
 (`$ € £ ¥ …`, `EUR 48,90`, `5,000 JPY`), US and European number formats, and card numbers ("ending in
 1234", "****1234"). Statement, payment and login emails are rejected.
 
+`SpanishAlertParser` reads label/value alerts in Spanish (Comercio, Monto, Fecha, Ciudad y país, Tipo de
+Transacción), as sent by BAC Credomatic and similar banks. Refunds and reversals are skipped. For a Costa
+Rica setup:
+
+```bash
+FRAUDALERT_HOME_CURRENCY=USD            # or CRC; colones/dollars are converted either way
+FRAUDALERT_HOME_COUNTRY=Costa Rica
+FRAUDALERT_TIMEZONE=America/Costa_Rica
+```
+
 Emails from your bank that couldn't be parsed are listed on the **Emails** page with the reason. If
 your bank uses an unusual format, add a `BaseParser` subclass to `fraudalert/ingest/parsers.py`
-(ahead of the generic one), then click **Retry parsing** or run `fraudalert reevaluate --reparse`.
+(ahead of the generic one). A specific parser that recognises an email has the final say: the
+generic heuristics only run for emails no specific parser claims.
+
+After updating the app, click **Re-parse all emails** on the Emails page (or run
+`fraudalert reevaluate --reparse-all`) to re-read every stored email with the new parsers. Transactions
+are updated in place, so your ✓ legit / ✗ fraud labels are kept. **Retry parsing** (`--reparse`) only
+retries emails that failed.
 
 ## Development
 

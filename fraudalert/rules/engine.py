@@ -15,7 +15,8 @@ from typing import Any
 
 # field -> type. Values here are what `transaction_context` produces.
 FIELDS: dict[str, type] = {
-    "amount": float,
+    "amount": float,  # converted to the home currency (see fraudalert/fx.py)
+    "amount_original": float,  # as charged, in `currency`
     "currency": str,
     "merchant": str,
     "card_last4": str,

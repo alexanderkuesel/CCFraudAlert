@@ -181,8 +181,13 @@ def create_app(init: bool = True) -> FastAPI:
 
     @app.post("/emails/reparse")
     def reparse():
-        r = pipeline.reevaluate_all(reparse_failed=True)
+        r = pipeline.reevaluate_all(reparse="failed")
         return redirect("/emails", msg=f"Re-parsed: {r.parsed} recovered, {r.failed} still failing.")
+
+    @app.post("/emails/reparse-all")
+    def reparse_all():
+        r = pipeline.reevaluate_all(reparse="all")
+        return redirect("/emails", msg=f"Re-parsed every email: {r.parsed} transactions, {r.failed} unparsed.")
 
     @app.post("/sync")
     def sync(background: BackgroundTasks):

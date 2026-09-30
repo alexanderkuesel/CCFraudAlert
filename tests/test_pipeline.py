@@ -106,3 +106,51 @@ def test_concurrent_ingest_of_same_email_is_not_an_error(db, tmp_path, monkeypat
     assert sorted(r.fetched for r in results) == [0, 1]
     with db.session_scope() as s:
         assert len(s.scalars(select(Transaction)).all()) == 1
+
+
+def test_bac_country_currency_and_local_time(db, tmp_path, monkeypatch):
+    """Costa Rica setup: USD home currency, colones converted for rules, foreign = outside Costa Rica."""
+    from fraudalert.config import get_settings
+
+    from .bac import bac_eml
+
+    monkeypatch.setenv("FRAUDALERT_HOME_COUNTRY", "Costa Rica")
+    monkeypatch.setenv("FRAUDALERT_TIMEZONE", "America/Costa_Rica")
+    monkeypatch.setenv("FRAUDALERT_FX_RATES", "CRC=0.002")
+    get_settings.cache_clear()
+    sent = NOW - timedelta(days=1)
+    files = []
+    for name, kw in {
+        "abroad": dict(merchant="GLOBAL-E", place=", Reino Unido", amount="USD 54.00"),
+        "local_small": dict(merchant="FAST MARKET", place="HEREDIA, Costa Rica", amount="CRC 12,500.00"),  # ~25 USD
+        "local_big": dict(merchant="TIENDA", place="SAN JOSE, Costa Rica", amount="CRC 150,000.00"),  # ~300 USD
+    }.items():
+        p = tmp_path / f"{name}.eml"
+        p.write_bytes(bac_eml(sent, date="Sep 29, 2026, 17:01", **kw))
+        files.append(p)
+    pipeline.import_eml_files(files)
+    with db.session_scope() as s:
+        by = {t.merchant: t for t in s.scalars(select(Transaction))}
+        assert by["GLOBAL-E"].is_foreign and not by["FAST MARKET"].is_foreign
+        assert {m for m, t in by.items() if t.flagged} == {"GLOBAL-E", "TIENDA"}  # foreign, and > 100 USD
+        # 17:01 in Costa Rica (UTC-6) is 23:01 UTC
+        assert by["FAST MARKET"].occurred_at.astimezone(timezone.utc).hour == 23
+    get_settings.cache_clear()
+
+
+def test_reparse_all_fixes_old_parses_and_keeps_labels(db, tmp_path):
+    """Emails parsed badly by an older parser get corrected in place; the user's label survives."""
+    from .bac import bac_eml
+
+    p = tmp_path / "bac.eml"
+    p.write_bytes(bac_eml(NOW - timedelta(days=1)))
+    pipeline.import_eml_files([p])
+    with db.session_scope() as s:
+        txn = s.scalar(select(Transaction))
+        txn_id = txn.id
+        txn.merchant, txn.is_foreign, txn.label_fraud = "", True, False  # what the old generic parser produced
+    r = pipeline.reevaluate_all(reparse="all")
+    assert (r.parsed, r.failed) == (1, 0)
+    with db.session_scope() as s:
+        txn = s.scalar(select(Transaction))
+        assert (txn.id, txn.merchant, txn.label_fraud) == (txn_id, "GLOBAL-E", False)

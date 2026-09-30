@@ -78,3 +78,15 @@ def test_refuses_network_exposure_without_password():
     assert exposure_problem(local, "0.0.0.0", in_container=True) is None  # docker publishes on loopback only
     assert exposure_problem(local, "0.0.0.0", in_container=False)  # bare `serve --host 0.0.0.0`
     assert exposure_problem(local, "127.0.0.1", in_container=False) is None
+
+
+def test_reparse_all_button(db, tmp_path):
+    from .bac import bac_eml
+
+    p = tmp_path / "bac.eml"
+    p.write_bytes(bac_eml(datetime.now(timezone.utc) - timedelta(days=1)))
+    pipeline.import_eml_files([p])
+    client = TestClient(create_app(init=False))
+    assert "Re-parse all emails" in client.get("/emails").text
+    r = client.post("/emails/reparse-all")
+    assert r.status_code == 200 and "1 transactions, 0 unparsed" in r.text

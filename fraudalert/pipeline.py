@@ -14,9 +14,10 @@ from sqlalchemy.orm import Session
 from fraudalert.anomaly import AnomalyDetector, get_detector
 from fraudalert.anomaly.features import TxnView, compute_features
 from fraudalert.config import Settings, get_settings
+from fraudalert.fx import Converter, parse_rates
 from fraudalert.db import SYNC_LOCK_KEY, session_scope, try_advisory_lock
 from fraudalert.ingest.message import EmailMessage, parse_rfc822
-from fraudalert.ingest.parsers import ParseError, parse_email
+from fraudalert.ingest.parsers import ParsedTransaction, ParseError, _fold, parse_email
 from fraudalert.models import Alert, RawEmail, Rule, SyncState, Transaction
 from fraudalert.notify import notify
 from fraudalert.rules.engine import RuleSpec, describe, evaluate
@@ -45,20 +46,59 @@ def _as_utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
-def _view(txn: Transaction, tz: ZoneInfo) -> TxnView:
+_ENV_CACHE: dict[tuple, "Env"] = {}
+
+
+@dataclass
+class Env:
+    """Per-user context for interpreting transactions: local timezone and currency conversion."""
+
+    tz: ZoneInfo
+    fx: Converter
+    home_currency: str
+    home_countries: set[str]
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "Env":
+        key = (settings.timezone, settings.home_currency, settings.fx_rates, settings.home_country)
+        if key not in _ENV_CACHE:
+            _ENV_CACHE[key] = cls._build(settings)
+        return _ENV_CACHE[key]
+
+    @classmethod
+    def _build(cls, settings: Settings) -> "Env":
+        return cls(
+            tz=ZoneInfo(settings.timezone),
+            fx=Converter(settings.home_currency, parse_rates(settings.fx_rates)),
+            home_currency=settings.home_currency.upper(),
+            home_countries={_fold(c) for c in settings.home_country.split(",") if c.strip()},
+        )
+
+    def is_foreign(self, parsed: ParsedTransaction) -> bool:
+        if parsed.country and self.home_countries:
+            return _fold(parsed.country) not in self.home_countries
+        return parsed.currency != self.home_currency or parsed.foreign_hint
+
+    def localize(self, dt: datetime) -> datetime:
+        """Dates written in an email without a timezone are the user's local time."""
+        return dt.replace(tzinfo=self.tz) if dt.tzinfo is None else dt
+
+
+def _view(txn: Transaction, env: Env) -> TxnView:
     return TxnView(
-        occurred_at=_as_utc(txn.occurred_at).astimezone(tz),
-        amount=float(txn.amount),
+        occurred_at=_as_utc(txn.occurred_at).astimezone(env.tz),
+        amount=env.fx.to_home(float(txn.amount), txn.currency),
         merchant=txn.merchant or "",
         is_foreign=bool(txn.is_foreign),
     )
 
 
-def transaction_context(txn: Transaction, tz: ZoneInfo) -> dict:
+def transaction_context(txn: Transaction, env: Env) -> dict:
     """The dict rules are evaluated against (keys = rules.engine.FIELDS)."""
-    local = _as_utc(txn.occurred_at).astimezone(tz)
+    local = _as_utc(txn.occurred_at).astimezone(env.tz)
     return {
-        "amount": float(txn.amount),
+        "amount": env.fx.to_home(float(txn.amount), txn.currency),
+        "amount_original": float(txn.amount),
         "currency": txn.currency,
         "merchant": txn.merchant or "",
         "card_last4": txn.card_last4,
@@ -74,22 +114,22 @@ def load_rules(session: Session) -> list[RuleSpec]:
     return [RuleSpec(r.id, r.name, r.match, r.conditions, r.severity) for r in rows]
 
 
-def score_transaction(session: Session, txn: Transaction, detector: AnomalyDetector, tz: ZoneInfo) -> None:
+def score_transaction(session: Session, txn: Transaction, detector: AnomalyDetector, env: Env) -> None:
     q = select(Transaction).where(Transaction.occurred_at < txn.occurred_at)
     if txn.id is not None:
         q = q.where(Transaction.id != txn.id)
     history = session.scalars(q.order_by(Transaction.occurred_at.desc()).limit(HISTORY_LIMIT)).all()
-    features = compute_features(_view(txn, tz), [_view(h, tz) for h in history])
+    features = compute_features(_view(txn, env), [_view(h, env) for h in history])
     txn.features = features
     txn.anomaly_score = detector.score(features)
     txn.anomaly_model = detector.name
 
 
-def apply_rules(session: Session, txn: Transaction, rules: list[RuleSpec], tz: ZoneInfo) -> list[Alert]:
+def apply_rules(session: Session, txn: Transaction, rules: list[RuleSpec], env: Env) -> list[Alert]:
     """Replace this transaction's rule alerts with a fresh evaluation. Returns the new alerts."""
     for stale in [a for a in txn.alerts if a.rule_id is not None]:
         txn.alerts.remove(stale)  # delete-orphan cascade removes the row
-    ctx = transaction_context(txn, tz)
+    ctx = transaction_context(txn, env)
     new = []
     for rule in rules:
         if evaluate(rule, ctx):
@@ -131,33 +171,37 @@ def ingest_message(
 
 
 def _parse_into_transaction(session, raw, settings, detector, rules, result) -> Transaction | None:
+    """Parse a stored email into its transaction, creating it or updating it in place (so a
+    re-parse keeps the transaction's id and your fraud/legit label)."""
+    env = Env.from_settings(settings)
     msg = EmailMessage(raw.message_id, raw.sender, raw.subject, raw.received_at, raw.body)
     try:
         parsed, parser_name = parse_email(msg, settings.home_currency)
     except ParseError as exc:
-        raw.parse_status, raw.parse_error = "failed", str(exc)
+        raw.parse_status, raw.parse_error, raw.parser_name = "failed", str(exc), None
+        if raw.transaction is not None:  # parsed before, but not any more (e.g. now known to be a refund)
+            session.delete(raw.transaction)
+            session.flush()
         result.failed += 1
         return None
     raw.parse_status, raw.parse_error, raw.parser_name = "parsed", None, parser_name
     result.parsed += 1
 
-    tz = ZoneInfo(settings.timezone)
-    txn = Transaction(
-        email_id=raw.id,
-        occurred_at=_as_utc(parsed.occurred_at),
-        amount=parsed.amount,
-        currency=parsed.currency,
-        merchant=parsed.merchant,
-        card_last4=parsed.card_last4,
-        is_foreign=parsed.currency != settings.home_currency or parsed.foreign_hint,
-    )
+    txn = raw.transaction or Transaction(email_id=raw.id)
+    txn.occurred_at = _as_utc(env.localize(parsed.occurred_at))
+    txn.amount = parsed.amount
+    txn.currency = parsed.currency
+    txn.merchant = parsed.merchant
+    txn.card_last4 = parsed.card_last4
+    txn.is_foreign = env.is_foreign(parsed)
+    is_new = txn.id is None
     session.add(txn)
     session.flush()
-    score_transaction(session, txn, detector, tz)
-    new_alerts = apply_rules(session, txn, rules, tz)
+    score_transaction(session, txn, detector, env)
+    new_alerts = apply_rules(session, txn, rules, env)
     if new_alerts:
         result.flagged += 1
-        if datetime.now(timezone.utc) - txn.occurred_at <= NOTIFY_MAX_AGE:
+        if is_new and datetime.now(timezone.utc) - txn.occurred_at <= NOTIFY_MAX_AGE:
             if notify(settings, txn, [a.reason for a in new_alerts]):
                 for a in new_alerts:
                     a.notified = True
@@ -247,26 +291,32 @@ def import_eml_files(paths: list[Path], settings: Settings | None = None) -> Syn
     return result
 
 
-def reevaluate_all(settings: Settings | None = None, reparse_failed: bool = False) -> SyncResult:
+def reevaluate_all(settings: Settings | None = None, reparse: str = "none") -> SyncResult:
     """Re-score every transaction and re-apply the current rules (after rules or detector change).
 
-    With `reparse_failed`, emails that previously failed to parse are retried first (after
-    improving a parser). No notifications are sent for re-evaluated transactions.
+    `reparse="failed"` first retries emails that failed to parse; `reparse="all"` re-parses every
+    stored email (after a parser improvement), updating transactions in place. No notifications
+    are sent for re-evaluated transactions.
     """
+    if reparse not in ("none", "failed", "all"):
+        raise ValueError(f"reparse must be none, failed or all, not {reparse!r}")
     settings = settings or get_settings()
     detector = get_detector(settings.detector)
-    tz = ZoneInfo(settings.timezone)
+    env = Env.from_settings(settings)
     result = SyncResult()
     with session_scope() as session:
         rules = load_rules(session)
-        if reparse_failed:
+        if reparse != "none":
             quiet = settings.model_copy(update={"notify_webhook_url": ""})
-            for raw in session.scalars(select(RawEmail).where(RawEmail.parse_status == "failed")).all():
+            q = select(RawEmail).order_by(RawEmail.received_at)
+            if reparse == "failed":
+                q = q.where(RawEmail.parse_status == "failed")
+            for raw in session.scalars(q).all():
                 _parse_into_transaction(session, raw, quiet, detector, rules, result)
             result = SyncResult(parsed=result.parsed, failed=result.failed)
         for txn in session.scalars(select(Transaction).order_by(Transaction.occurred_at)).all():
-            score_transaction(session, txn, detector, tz)
-            if apply_rules(session, txn, rules, tz):
+            score_transaction(session, txn, detector, env)
+            if apply_rules(session, txn, rules, env):
                 result.flagged += 1
     return result
 

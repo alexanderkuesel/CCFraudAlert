@@ -23,6 +23,8 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("paths", nargs="+", type=Path)
     r = sub.add_parser("reevaluate", help="re-score all transactions and re-apply current rules")
     r.add_argument("--reparse", action="store_true", help="also retry emails that failed to parse")
+    r.add_argument("--reparse-all", action="store_true",
+                   help="re-parse every stored email (after a parser update); keeps fraud/legit labels")
     e = sub.add_parser("export-features", help="write feature vectors + labels to CSV for model training")
     e.add_argument("out", type=Path)
 
@@ -72,7 +74,8 @@ def main(argv: list[str] | None = None) -> int:
         files = [p for path in args.paths for p in (sorted(path.glob("*.eml")) if path.is_dir() else [path])]
         print(pipeline.import_eml_files(files))
     elif args.cmd == "reevaluate":
-        print(pipeline.reevaluate_all(reparse_failed=args.reparse))
+        mode = "all" if args.reparse_all else "failed" if args.reparse else "none"
+        print(pipeline.reevaluate_all(reparse=mode))
     elif args.cmd == "export-features":
         export_features(args.out)
     return 0

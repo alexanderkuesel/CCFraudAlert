@@ -4,6 +4,7 @@
 <div class="toolbar">
   <a href="/emails?status=failed">Unparsed</a> · <a href="/emails?status=parsed">Parsed</a>
   <form class="inline" method="post" action="/emails/reparse" style="margin-left:auto"><button>Retry parsing unparsed emails</button></form>
+  <form class="inline" method="post" action="/emails/reparse-all" title="Use after updating the app: re-reads every stored email. Your fraud/legit labels are kept."><button>Re-parse all emails</button></form>
 </div>
 <p class="muted">Emails that matched your sender filter but could not be turned into a transaction. If a real transaction shows up here, the parser needs a tweak (see <code>fraudalert/ingest/parsers.py</code>).</p>
 {% for e in rows %}
