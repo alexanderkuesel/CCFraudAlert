@@ -101,6 +101,7 @@ td.empty { padding: 1.4rem; text-align: center; color: var(--muted); }
 .alarm-table td:first-child { width: 36px; }
 .state-tag { font-size: 11px; font-weight: 800; letter-spacing: .06em; padding: .05rem .35rem; border: 1.5px solid var(--fg); border-radius: 2px; }
 .alarm-text { font-size: 13px; min-width: 190px; }
+.bank-ref { font-size: 11px; color: var(--muted); font-weight: 400; margin-top: .1rem; }
 .tag { font-size: 11px; padding: 0 .35rem; border: 1px solid var(--border); border-radius: 2px; color: var(--muted); white-space: nowrap; }
 
 /* Row states. Normal and acknowledged-legit rows stay grey (ISA-101); fraud stays loud. */
@@ -140,6 +141,7 @@ tr.row-normal { color: var(--muted); }
 th.sel, td.sel { width: 30px; padding-right: 0; }
 tr.selected td { background: rgba(93, 125, 156, .16); }
 
+label.check-inline { display: flex; align-items: center; gap: .4rem; color: var(--fg); font-size: 14px; margin-top: 1.4rem; }
 .model-metrics { width: auto; margin: .25rem 0 .5rem; }
 .model-metrics td { border: 0; padding: .2rem 1.2rem .2rem 0; }
 .model-metrics td:first-child { color: var(--muted); }

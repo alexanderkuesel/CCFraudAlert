@@ -321,6 +321,32 @@ def create_app(init: bool = True) -> FastAPI:
         pipeline.reevaluate_all()
         return redirect("/rules", msg="Rule deleted.")
 
+    @app.post("/settings/report")
+    async def save_report_settings(request: Request):
+        from fraudalert import report
+
+        form = await request.form()
+        try:
+            with session_scope() as s:
+                saved = report.save_prefs(s, {k: form.get(k, "") for k in report.DEFAULTS})
+        except ValueError as exc:
+            return redirect("/settings", error=str(exc))
+        state = f"on, daily at {saved['time']}" if saved["enabled"] else "off"
+        return redirect("/settings", msg=f"Daily report saved ({state}).")
+
+    @app.post("/report/test")
+    def send_test_report():
+        from fraudalert import report
+
+        try:
+            r = report.send_report(test=True)
+        except Exception as exc:  # noqa: BLE001 - show mail/login problems to the user
+            return redirect("/settings", error=f"Test report not sent: {exc}")
+        with session_scope() as s:
+            to = report.get_prefs(s, get_settings())["to"]
+        return redirect("/settings", msg=f"Test report sent to {to} ({r.transactions} transactions, "
+                                         f"{r.unacknowledged} unacknowledged).")
+
     @app.post("/model/train")
     def train_model():
         from fraudalert.anomaly.training import NotEnoughData
@@ -341,12 +367,18 @@ def create_app(init: bool = True) -> FastAPI:
         with session_scope() as s:
             normal = prefs.normal_currencies(s, settings)
             model = latest_model_info(s)
+            from fraudalert import report as report_mod
+
+            report_prefs = report_mod.get_prefs(s, settings)
+            report_last = report_mod.last_sent(s)
+            report_error = report_mod.last_error(s)
             scored = s.scalar(select(func.count(Transaction.id)).where(Transaction.features.is_not(None)))
         return templates.TemplateResponse(request, "settings.html", {
             "normal": ", ".join(normal),
             "default_normal": ", ".join(prefs.default_normal_currencies(settings)),
             "settings": settings,
             "model": model, "scored": scored, "min_samples": MIN_SAMPLES,
+            "report": report_prefs, "report_last": report_last, "report_error": report_error,
         })
 
     @app.post("/settings")
@@ -404,6 +436,7 @@ def create_app(init: bool = True) -> FastAPI:
         return {
             "id": t.id, "occurred_at": t.occurred_at.isoformat(), "amount": str(t.amount),
             "currency": t.currency, "merchant": t.merchant, "card_last4": t.card_last4,
+            "auth_code": t.auth_code, "reference": t.reference,
             "is_foreign": t.is_foreign, "anomaly_score": t.anomaly_score, "flagged": t.flagged,
             "label_fraud": t.label_fraud, "comment": t.comment, "alerts": [a.reason for a in t.alerts],
         }

@@ -152,3 +152,22 @@ def test_amounts_without_leading_digit(raw, expected):
     from fraudalert.ingest.parsers import _first_amount
 
     assert _first_amount(raw, "USD")[0] == Decimal(expected)
+
+
+def test_bac_authorization_and_reference():
+    p, _ = bac()  # the fixture's "Autorización: 657401", empty "Referencia:"
+    assert (p.auth_code, p.reference) == ("657401", None)
+    body = ("Comercio:\tUBER\nCiudad y país:\tSAN JOSE, Costa Rica\nFecha:\tSep 29, 2026, 08:15\n"
+            "Autorización:\t332031\nReferencia:\t926900123456\nTipo de Transacción:\tCOMPRA\nMonto:\tCRC 3,450.00")
+    p, _ = parse_email(EmailMessage("<i>", SENDER, "Notificación de transacción UBER", BAC_SENT, body), "USD")
+    assert (p.auth_code, p.reference) == ("332031", "926900123456")
+
+
+@pytest.mark.parametrize("body,auth,ref", [
+    ("You spent $12.00 at DELI. Authorization code: A1B2C3. Reference number: 7788-9900.", "A1B2C3", "7788-9900"),
+    ("You spent $12.00 at DELI.\nApproval code\n445566", "445566", None),
+    ("You spent $12.00 at DELI. Thank you for your reference.", None, None),  # no false positive
+])
+def test_generic_authorization_and_reference(body, auth, ref):
+    p, _ = parse_email(msg("Purchase alert", body), "USD")
+    assert (p.auth_code, p.reference) == (auth, ref)

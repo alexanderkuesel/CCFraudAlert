@@ -54,6 +54,8 @@ class Transaction(Base):
     currency: Mapped[str] = mapped_column(String(3))
     merchant: Mapped[str] = mapped_column(String(512), default="")
     card_last4: Mapped[str | None] = mapped_column(String(4))
+    auth_code: Mapped[str | None] = mapped_column(String(32))  # bank's authorization code, quote it when reporting
+    reference: Mapped[str | None] = mapped_column(String(64))  # bank's reference number, if the email has one
     is_foreign: Mapped[bool] = mapped_column(Boolean, default=False)
     source: Mapped[str] = mapped_column(String(64), default="email")
 

@@ -52,14 +52,21 @@ def init_db() -> None:
             # Held until this transaction commits, i.e. until tables and seed rows exist.
             conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _INIT_LOCK_KEY})
         Base.metadata.create_all(conn)
-        _add_missing_columns(conn)
+        added_columns = _add_missing_columns(conn)
         with Session(bind=conn) as session:
             added = seed_default_rules(session)
             session.flush()
-    if added and _has_transactions():
-        # New built-in rules (after an upgrade): apply them to the transactions already stored.
-        from fraudalert.pipeline import reevaluate_all
+    if not _has_transactions():
+        return
+    from fraudalert.pipeline import reevaluate_all
 
+    if REPARSE_WHEN_ADDED & added_columns:
+        # New parsed fields (e.g. the bank's authorization code): re-read the stored emails once to fill
+        # them in. This updates transactions in place, so labels and comments are kept.
+        log.info("new columns %s: re-parsing stored emails to fill them", sorted(REPARSE_WHEN_ADDED & added_columns))
+        reevaluate_all(reparse="all")
+    elif added:
+        # New built-in rules (after an upgrade): apply them to the transactions already stored.
         log.info("added %d built-in rule(s); re-evaluating stored transactions", added)
         reevaluate_all()
 
@@ -71,11 +78,16 @@ def _has_transactions() -> bool:
         return s.query(Transaction.id).first() is not None
 
 
-def _add_missing_columns(conn) -> None:
+# Columns filled by the email parser: when an upgrade adds one, stored emails are re-parsed once.
+REPARSE_WHEN_ADDED = {"transactions.auth_code", "transactions.reference"}
+
+
+def _add_missing_columns(conn) -> set[str]:
     """Minimal schema upgrade: create_all() makes missing tables but never alters existing ones,
     so add any model column an older database lacks. Only nullable, default-less columns can be
     added this way; anything more involved needs a real migration."""
     inspector = inspect(conn)
+    added: set[str] = set()
     for table in Base.metadata.sorted_tables:
         if not inspector.has_table(table.name):
             continue
@@ -89,6 +101,8 @@ def _add_missing_columns(conn) -> None:
             prep = conn.dialect.identifier_preparer
             conn.execute(text(f"ALTER TABLE {prep.quote(table.name)} ADD COLUMN {prep.quote(column.name)} {ddl_type}"))
             log.info("added column %s.%s", table.name, column.name)
+            added.add(f"{table.name}.{column.name}")
+    return added
 
 
 @contextmanager
