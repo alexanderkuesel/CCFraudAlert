@@ -20,11 +20,12 @@
 <table>
   <thead><tr>
     <th>When ({{ tz }})</th><th>Merchant</th><th>Card</th><th style="text-align:right">Amount</th>
-    <th title="0 = normal, 1 = very unusual">Anomaly</th><th>Alerts</th><th>Review</th>
+    <th title="0 = normal, 1 = very unusual">Anomaly</th><th>Alerts</th><th>Review</th><th>Comment</th>
   </tr></thead>
   <tbody>
   {% for t in rows %}
-    <tr class="{{ 'flagged' if t.flagged }}">
+    {% set review = 'label-fraud' if t.label_fraud else ('label-legit' if t.label_fraud is false else ('flagged' if t.flagged else '')) %}
+    <tr class="{{ review }}">
       <td class="muted" style="white-space:nowrap">{{ t.occurred_at | local }}</td>
       <td>{{ t.merchant or '—' }}{% if t.is_foreign or t.currency not in normal %} <span class="pill foreign">foreign</span>{% endif %}</td>
       <td class="muted" style="white-space:nowrap">{{ ('…' ~ t.card_last4) if t.card_last4 else '' }}</td>
@@ -35,17 +36,44 @@
         {% if t.label_fraud is none %}
           <form class="inline" method="post" action="/transactions/{{ t.id }}/label"><button class="link" name="label" value="legit">✓ legit</button><button class="link" name="label" value="fraud" style="color:var(--danger)">✗ fraud</button></form>
         {% else %}
-          <span class="pill {{ 'high' if t.label_fraud }}">{{ 'fraud' if t.label_fraud else 'legit' }}</span>
+          <span class="badge {{ 'badge-fraud' if t.label_fraud else 'badge-legit' }}">{{ '✗ FRAUD' if t.label_fraud else '✓ LEGIT' }}</span>
           <form class="inline" method="post" action="/transactions/{{ t.id }}/label"><button class="link" name="label" value="">undo</button></form>
         {% endif %}
       </td>
+      <td class="comment-cell">
+        <form method="post" action="/transactions/{{ t.id }}/comment" class="comment-form">
+          <input name="comment" value="{{ t.comment or '' }}" maxlength="1000" placeholder="Add a note…" aria-label="Comment">
+          <span class="comment-status" aria-live="polite"></span>
+        </form>
+      </td>
     </tr>
   {% else %}
-    <tr><td colspan="7" class="muted">No transactions yet. Click “Sync inbox”, or import .eml files with <code>fraudalert import-eml</code>.</td></tr>
+    <tr><td colspan="8" class="muted">No transactions yet. Click “Sync inbox”, or import .eml files with <code>fraudalert import-eml</code>.</td></tr>
   {% endfor %}
   </tbody>
 </table>
 </div>
+
+<script>
+// Save comments in place: on Enter or when the field loses focus, without reloading the page.
+document.querySelectorAll('.comment-form').forEach(form => {
+  const input = form.querySelector('input'), status = form.querySelector('.comment-status');
+  let saved = input.value;
+  async function save() {
+    if (input.value === saved) return;
+    status.textContent = 'saving…';
+    try {
+      const r = await fetch(form.action, {method: 'POST', body: new FormData(form), headers: {'X-Requested-With': 'fetch'}});
+      if (!r.ok) throw new Error(r.status);
+      saved = input.value;
+      status.textContent = '✓ saved';
+      setTimeout(() => { if (status.textContent === '✓ saved') status.textContent = ''; }, 1500);
+    } catch (e) { status.textContent = '⚠ not saved'; }
+  }
+  form.addEventListener('submit', e => { e.preventDefault(); save(); });
+  input.addEventListener('blur', save);
+});
+</script>
 
 {% if pages > 1 %}
 <div class="pager">

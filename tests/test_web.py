@@ -106,3 +106,41 @@ def test_settings_page_normal_currencies(db):
     assert "not a 3-letter currency code: COLONES" in r.text
     with db.session_scope() as s:
         assert prefs.normal_currencies(s, get_settings()) == ["CRC", "USD"]  # unchanged
+
+
+def test_review_styling_and_comments(db, tmp_path):
+    now = datetime.now(timezone.utc)
+    files = []
+    for i, merchant in enumerate(["FRAUDY", "LEGITCO", "PENDING"]):
+        p = tmp_path / f"{i}.eml"
+        p.write_bytes(make_eml("Alert", f"You spent $500.00 at {merchant}.", now - timedelta(days=3 - i)))
+        files.append(p)
+    pipeline.import_eml_files(files)
+    client = TestClient(create_app(init=False))
+    ids = {t["merchant"]: t["id"] for t in client.get("/api/transactions").json()}
+    client.post(f"/transactions/{ids['FRAUDY']}/label", data={"label": "fraud"})
+    client.post(f"/transactions/{ids['LEGITCO']}/label", data={"label": "legit"})
+
+    # Inline save (fetch) returns a small OK; a plain form post redirects back.
+    r = client.post(f"/transactions/{ids['FRAUDY']}/comment", data={"comment": "  not me — card cancelled  "},
+                    headers={"X-Requested-With": "fetch"})
+    assert (r.status_code, r.text) == (200, "saved")
+    assert client.post(f"/transactions/{ids['LEGITCO']}/comment", data={"comment": "x" * 5000},
+                       follow_redirects=False).status_code == 303
+    assert client.post("/transactions/999999/comment", data={"comment": "x"}).status_code == 404
+
+    by = {t["merchant"]: t for t in client.get("/api/transactions").json()}
+    assert by["FRAUDY"]["comment"] == "not me — card cancelled"
+    assert len(by["LEGITCO"]["comment"]) == 1000
+    assert by["PENDING"]["comment"] is None
+
+    html = client.get("/").text
+    rows = {m: html.split(m)[0].rsplit("<tr", 1)[1] for m in ("FRAUDY", "LEGITCO", "PENDING")}
+    assert 'class="label-fraud"' in rows["FRAUDY"]
+    assert 'class="label-legit"' in rows["LEGITCO"]
+    assert 'class="flagged"' in rows["PENDING"]  # $500 matches the default rule, not reviewed yet
+    assert "✗ FRAUD" in html and "✓ LEGIT" in html
+    assert 'value="not me — card cancelled"' in html
+
+    client.post(f"/transactions/{ids['FRAUDY']}/comment", data={"comment": ""})  # clearing
+    assert {t["merchant"]: t["comment"] for t in client.get("/api/transactions").json()}["FRAUDY"] is None

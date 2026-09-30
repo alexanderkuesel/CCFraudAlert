@@ -1,11 +1,13 @@
 :root {
   --bg: #f7f7f5; --fg: #1d1d1f; --muted: #6b6b70; --card: #fff; --border: #e3e3e0;
   --accent: #2f5bea; --danger: #c62828; --danger-bg: #fdecea; --warn-bg: #fff4e0; --ok: #2e7d32;
+  --fraud-bg: #f8c9c4; --legit-bg: #e3f4e4;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #141416; --fg: #ececef; --muted: #9a9aa2; --card: #1d1d20; --border: #2e2e33;
     --accent: #7c9cff; --danger: #ff6b6b; --danger-bg: #3a1f1f; --warn-bg: #3a2f1a; --ok: #66bb6a;
+    --fraud-bg: #5a1d1d; --legit-bg: #1d3520;
   }
 }
 * { box-sizing: border-box; }
@@ -47,3 +49,18 @@ form.inline { display: inline; }
 label { display: block; font-size: 12px; color: var(--muted); margin-bottom: .2rem; }
 pre { white-space: pre-wrap; font-size: 12px; max-height: 240px; overflow: auto; background: var(--bg); padding: .5rem; border-radius: 6px; }
 .pager { margin-top: .75rem; display: flex; gap: 1rem; align-items: center; }
+
+/* Review state: fraud is loud, legit is calm green; unreviewed flagged rows keep the light red. */
+tr.label-fraud { background: var(--fraud-bg); font-weight: 600; }
+tr.label-fraud td:first-child { box-shadow: inset 5px 0 0 var(--danger); }
+tr.label-legit { background: var(--legit-bg); }
+tr.label-legit td:first-child { box-shadow: inset 5px 0 0 var(--ok); }
+tr.label-legit .alert-reason { color: var(--muted); text-decoration: line-through; }
+.badge { display: inline-block; padding: .1rem .55rem; border-radius: 4px; font-size: 12px; font-weight: 700; letter-spacing: .03em; color: #fff; white-space: nowrap; }
+.badge-fraud { background: #c62828; }
+.badge-legit { background: #2e7d32; }
+.comment-cell { min-width: 180px; }
+.comment-form { display: flex; align-items: center; gap: .35rem; margin: 0; }
+.comment-form input { width: 100%; min-width: 140px; font-size: 13px; background: transparent; border-color: transparent; border-bottom-color: var(--border); border-radius: 0; }
+.comment-form input:hover, .comment-form input:focus { background: var(--card); border-color: var(--border); border-radius: 6px; outline: none; }
+.comment-status { font-size: 11px; color: var(--muted); white-space: nowrap; font-weight: 400; }

@@ -1,10 +1,13 @@
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from fraudalert.config import get_settings
+
+log = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -49,9 +52,30 @@ def init_db() -> None:
             # Held until this transaction commits, i.e. until tables and seed rows exist.
             conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _INIT_LOCK_KEY})
         Base.metadata.create_all(conn)
+        _add_missing_columns(conn)
         with Session(bind=conn) as session:
             seed_default_rules(session)
             session.flush()
+
+
+def _add_missing_columns(conn) -> None:
+    """Minimal schema upgrade: create_all() makes missing tables but never alters existing ones,
+    so add any model column an older database lacks. Only nullable, default-less columns can be
+    added this way; anything more involved needs a real migration."""
+    inspector = inspect(conn)
+    for table in Base.metadata.sorted_tables:
+        if not inspector.has_table(table.name):
+            continue
+        existing = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in existing:
+                continue
+            if not column.nullable or column.server_default is not None:
+                raise RuntimeError(f"cannot auto-add {table.name}.{column.name}; it needs a migration")
+            ddl_type = column.type.compile(dialect=conn.dialect)
+            prep = conn.dialect.identifier_preparer
+            conn.execute(text(f"ALTER TABLE {prep.quote(table.name)} ADD COLUMN {prep.quote(column.name)} {ddl_type}"))
+            log.info("added column %s.%s", table.name, column.name)
 
 
 @contextmanager
