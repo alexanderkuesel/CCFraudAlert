@@ -173,6 +173,33 @@ total spend) as a graph, so unusual patterns stand out at a glance:
 * Typical things to look for: a card test (a **1** at a new merchant) followed by another **1** on the same
   card, a new foreign merchant hanging off one card, or a merchant only one card has ever used with a large total.
 
+## Daily report email
+
+Once a day at the time you choose (default **20:00** in `FRAUDALERT_TIMEZONE`), the worker emails a
+report laid out for calling your bank:
+
+* **Summary:** transactions and spend since the previous report, and new alarms by priority.
+* **Needs your attention:** every unacknowledged alarm, each with the local **time**, **amount**,
+  merchant, card, and the bank's own **authorization code** (and **reference** when the email has
+  one), right under *"Not yours? Call {your bank} at {phone} and quote the authorization code"*.
+* **Marked as fraud (last 30 days):** the same details, ready to report.
+* **Transactions since the last report:** each with its alarm state.
+* **All clear:** a one-line "all clear" when nothing needs attention.
+
+Set it up on **Settings → Daily report**: on/off, time, recipient (defaults to your IMAP address),
+bank name and phone, and an optional dashboard link. Use **Send test report now** to check it.
+`fraudalert report [--test]` does the same from the command line.
+
+It's sent through Gmail's SMTP with your existing IMAP login and app password, so there's nothing new
+to configure. Set `FRAUDALERT_SMTP_*` to use a different mail server or account. The report is sent
+once per day. If the machine was off at report time, the next report covers everything since the
+last one.
+
+The authorization code and reference (`Autorización` / `Referencia` in BAC alerts; "Authorization
+code" / "Reference number" in English ones) are also shown under the merchant on the alarm summary.
+Existing installs fill them in automatically on upgrade, by re-reading the stored emails; your
+labels and comments are kept.
+
 ## Notifications
 
 Set `FRAUDALERT_NOTIFY_WEBHOOK_URL` to get a POST for every new alarm. The message leads with the

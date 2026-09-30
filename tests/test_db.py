@@ -65,3 +65,29 @@ def test_init_db_adds_columns_missing_from_an_older_database(db):
     assert "comment" in {c["name"] for c in inspect(engine).get_columns("transactions")}
     with db.session_scope() as s:
         assert s.query(Transaction).count() == 0  # still queryable through the ORM
+
+
+def test_upgrade_adds_bank_code_columns_and_backfills_them(db, tmp_path):
+    """An install from before auth_code/reference existed gets the columns and the codes, keeping labels."""
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import text
+
+    from fraudalert import pipeline
+    from fraudalert.models import Transaction
+
+    from .bac import bac_eml
+
+    p = tmp_path / "bac.eml"
+    p.write_bytes(bac_eml(datetime.now(timezone.utc) - timedelta(days=1)))
+    pipeline.import_eml_files([p])
+    with db.session_scope() as s:
+        t = s.query(Transaction).one()
+        t.label_fraud, t.comment = True, "reported"
+    with db.get_engine().begin() as conn:  # simulate the old schema
+        conn.execute(text("ALTER TABLE transactions DROP COLUMN auth_code"))
+        conn.execute(text("ALTER TABLE transactions DROP COLUMN reference"))
+    db.init_db()
+    with db.session_scope() as s:
+        t = s.query(Transaction).one()
+        assert (t.auth_code, t.label_fraud, t.comment) == ("657401", True, "reported")

@@ -231,6 +231,8 @@ def _parse_into_transaction(session, raw, settings, detector, rules, result) -> 
     txn.currency = parsed.currency
     txn.merchant = parsed.merchant
     txn.card_last4 = parsed.card_last4
+    txn.auth_code = parsed.auth_code
+    txn.reference = parsed.reference
     txn.is_foreign = env.foreign_location(parsed)
     is_new = txn.id is None
     session.add(txn)

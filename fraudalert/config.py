@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     subject_filter: str = ""
     lookback_days: int = 90
 
+    # Outgoing mail for the daily report. Blank user/password = reuse the IMAP login (works for Gmail
+    # app passwords). Port 587 = STARTTLS, 465 = SSL.
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+
     home_currency: str = "USD"  # rules and anomaly features compare amounts in this currency
     # Currencies you normally pay in, e.g. "CRC,USD"; any other currency counts as foreign.
     # Defaults to the home currency. Editable on the web UI's Settings page (which takes precedence).

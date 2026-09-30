@@ -12,6 +12,30 @@
   <p class="muted" style="margin-bottom:0">Default from <code>FRAUDALERT_NORMAL_CURRENCIES</code> / home currency: {{ default_normal }}</p>
 </form>
 
+<form class="card" method="post" action="/settings/report">
+  <h3 style="margin-top:0">Daily report</h3>
+  <p class="muted" style="margin-top:0">An email each day at your chosen time ({{ settings.timezone }}): what came in since the
+    last report, every unacknowledged alarm and anything you marked as fraud, each with the time, amount, card and the bank's
+    authorization code and reference, next to your bank's phone number, ready to read out when you call.</p>
+  <div class="grid">
+    <div><label class="check-inline"><input type="checkbox" name="enabled" value="1" {{ 'checked' if report.enabled }}> Send the daily report</label></div>
+    <div><label for="r-time">Time</label><input id="r-time" type="time" name="time" value="{{ report.time }}" required></div>
+    <div><label for="r-to">Send to</label><input id="r-to" type="email" name="to" value="{{ report.to }}" placeholder="you@gmail.com" style="width:100%"></div>
+  </div>
+  <div class="grid">
+    <div><label for="r-bank">Bank name</label><input id="r-bank" name="bank_name" value="{{ report.bank_name }}" placeholder="BAC Credomatic" style="width:100%"></div>
+    <div><label for="r-phone">Bank phone (fraud / card services)</label><input id="r-phone" name="bank_phone" value="{{ report.bank_phone }}" placeholder="+506 2295-9898" style="width:100%"></div>
+    <div><label for="r-url">Dashboard link (optional)</label><input id="r-url" name="dashboard_url" value="{{ report.dashboard_url }}" placeholder="http://192.168.1.20:8000" style="width:100%"></div>
+  </div>
+  <p style="margin-bottom:0">
+    <button class="btn">Save</button>
+    <button class="btn" formaction="/report/test" formnovalidate>Send test report now</button>
+    <span class="muted">Last sent: {{ report_last | local if report_last else 'never' }}.
+      Sent with {{ settings.smtp_user or settings.imap_user or 'your IMAP login' }} via {{ settings.smtp_host }}.</span>
+  </p>
+  {% if report_error %}<p class="alert-reason" style="margin-bottom:0">Last send failed: {{ report_error }}</p>{% endif %}
+</form>
+
 <div class="card">
   <h3 style="margin-top:0">Anomaly model</h3>
   {% if settings.detector != 'iforest' %}

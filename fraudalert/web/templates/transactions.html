@@ -120,7 +120,10 @@
         {% else %}<span class="muted">—</span>{% endif %}
       </td>
       <td class="nowrap mono">{{ t.occurred_at | local }}</td>
-      <td>{{ t.merchant or '—' }}{% if is_foreign(t) %} <span class="tag">foreign</span>{% endif %}</td>
+      <td>{{ t.merchant or '—' }}{% if is_foreign(t) %} <span class="tag">foreign</span>{% endif %}
+        {% if t.auth_code or t.reference %}<div class="bank-ref" title="Quote these to your bank">
+          {% if t.auth_code %}Auth <span class="mono">{{ t.auth_code }}</span>{% endif %}
+          {% if t.reference %} · Ref <span class="mono">{{ t.reference }}</span>{% endif %}</div>{% endif %}</td>
       <td class="nowrap mono muted">{{ ('…' ~ t.card_last4) if t.card_last4 else '' }}</td>
       <td class="num mono">{{ '{:,.2f}'.format(t.amount) }} {{ t.currency }}</td>
       <td class="num mono">{{ '%.2f' % t.anomaly_score if t.anomaly_score is not none else '—' }}</td>

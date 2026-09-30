@@ -26,6 +26,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--reparse-all", action="store_true",
                    help="re-parse every stored email (after a parser update); keeps fraud/legit labels")
     sub.add_parser("train", help="train the Isolation Forest anomaly model now and re-score everything")
+    rp = sub.add_parser("report", help="email the daily report now (covers everything since the last one)")
+    rp.add_argument("--test", action="store_true", help="send a [TEST] copy without affecting the daily schedule")
     e = sub.add_parser("export-features", help="write feature vectors + labels to CSV for model training")
     e.add_argument("out", type=Path)
 
@@ -54,7 +56,19 @@ def main(argv: list[str] | None = None) -> int:
                     print("retrained the anomaly model", flush=True)
             except Exception:  # noqa: BLE001 - a training problem must not stop the worker
                 logging.exception("anomaly model retraining failed")
+            try:
+                from fraudalert.report import maybe_send_daily_report
+
+                if maybe_send_daily_report():
+                    print("sent the daily report", flush=True)
+            except Exception:  # noqa: BLE001 - a mail problem must not stop the worker (retried next loop)
+                logging.exception("daily report failed")
             time.sleep(args.interval)
+    elif args.cmd == "report":
+        from fraudalert.report import send_report
+
+        r = send_report(test=args.test)
+        print(f"sent: {r.transactions} transaction(s), {r.unacknowledged} unacknowledged alarm(s)")
     elif args.cmd == "train":
         from fraudalert.anomaly.training import NotEnoughData
 

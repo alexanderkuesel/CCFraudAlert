@@ -27,6 +27,8 @@ class ParsedTransaction:
     card_last4: str | None = None
     foreign_hint: bool = False  # the email itself says "foreign transaction" etc.
     country: str | None = None  # where the purchase happened, when the email says
+    auth_code: str | None = None  # the bank's authorization / approval code ("Autorización")
+    reference: str | None = None  # the bank's reference number ("Referencia"), if any
 
 
 # Symbols are checked longest-first so "US$" wins over "$".
@@ -72,6 +74,23 @@ DATE_LABEL_RE = re.compile(
     r"^\s*(?:date|transaction date|date and time|time)\s*:?\s*(?:\n\s*)?(?P<d>[^\n]{6,60})$",
     re.IGNORECASE | re.MULTILINE,
 )
+AUTH_RE = re.compile(
+    r"\b(?:authori[sz]ation(?:\s+code)?|auth\.?\s*code|approval\s+code)\s*(?:no\.?|number|#)?\s*[:#]?\s*\n?\s*"
+    r"(?P<v>(?=[A-Z0-9-]*\d)[A-Z0-9-]{4,20})\b",
+    re.IGNORECASE,
+)
+REF_RE = re.compile(
+    r"\b(?:reference|ref\.?)\s*(?:no\.?|number|#)?\s*[:#]\s*\n?\s*(?P<v>(?=[A-Z0-9-]*\d)[A-Z0-9-]{4,30})\b"
+    r"|\breference\s+number\s*\n?\s*(?P<v2>(?=[A-Z0-9-]*\d)[A-Z0-9-]{4,30})\b",
+    re.IGNORECASE,
+)
+
+
+def find_code(pattern: re.Pattern, text: str) -> str | None:
+    m = pattern.search(text)
+    return (m.group("v") or m.groupdict().get("v2")) if m else None
+
+
 FOREIGN_RE = re.compile(
     r"\b(foreign (?:transaction|purchase|charge|currency)|international (?:transaction|purchase|charge)|"
     r"outside (?:the )?(?:US|U\.S\.|country))\b",
@@ -219,7 +238,15 @@ class GenericAlertParser(BaseParser):
             occurred_at=occurred_at,
             card_last4=find_card(text),
             foreign_hint=bool(FOREIGN_RE.search(text)),
+            auth_code=find_code(AUTH_RE, msg.body),
+            reference=find_code(REF_RE, msg.body),
         )
+
+
+def _code(value: str | None) -> str | None:
+    """A bank code field: keep it only if it looks like a code (not blank, not another label)."""
+    v = (value or "").strip()
+    return v[:32] if re.fullmatch(r"[A-Za-z0-9-]{3,32}", v) else None
 
 
 def _fold(s: str) -> str:
@@ -306,6 +333,8 @@ class SpanishAlertParser(BaseParser):
             occurred_at=occurred_at,
             card_last4=card.group(1) if card else find_card(msg.body),
             country=country,
+            auth_code=_code(f.get("auth")),
+            reference=_code(f.get("ref")),
         )
 
 
