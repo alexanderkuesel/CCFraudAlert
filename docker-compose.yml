@@ -23,7 +23,9 @@ services:
     environment:
       FRAUDALERT_DATABASE_URL: postgresql+psycopg://fraudalert:fraudalert@db:5432/fraudalert
     ports:
-      - "127.0.0.1:${FRAUDALERT_WEB_HOST_PORT:-8000}:8000"
+      # FRAUDALERT_WEB_BIND=0.0.0.0 makes the UI reachable from other machines on your network
+      # (the app then refuses to start unless FRAUDALERT_WEB_USERNAME/PASSWORD are set).
+      - "${FRAUDALERT_WEB_BIND:-127.0.0.1}:${FRAUDALERT_WEB_HOST_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy

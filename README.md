@@ -137,8 +137,29 @@ Layout: `ingest/` (IMAP, MIME, parsers) · `rules/engine.py` · `anomaly/` (feat
 
 ## Security notes
 
-* The web UI binds to `127.0.0.1` by default. If you expose it, set `FRAUDALERT_WEB_USERNAME` and
-  `FRAUDALERT_WEB_PASSWORD` (HTTP basic auth) and put it behind HTTPS.
+* The web UI is only reachable from the machine it runs on by default (`127.0.0.1`).
+* Changes (POST/DELETE) coming from another website are rejected, so a page you visit can't use
+  your saved login to edit rules behind your back.
+* Basic auth over plain HTTP is fine on a trusted home network. Don't forward the port to the
+  internet; use a VPN such as Tailscale or WireGuard, or put it behind HTTPS.
+
+## Accessing the UI from other computers on your network
+
+Add to `.env`:
+
+```bash
+FRAUDALERT_WEB_BIND=0.0.0.0
+FRAUDALERT_WEB_USERNAME=you
+FRAUDALERT_WEB_PASSWORD=a-long-random-password
+```
+
+Then run `docker compose up -d`, and browse to `http://<this-machine's-LAN-IP>:8000` from another
+computer. The app refuses to start on the network without a username and password. Outside Docker,
+the same applies to `fraudalert serve --host 0.0.0.0`.
+
+If it still doesn't load, the host firewall is usually the cause. Allow inbound TCP 8000: on Windows
+use "Allow an app through firewall"; on Linux with ufw run `sudo ufw allow 8000/tcp`; on macOS allow
+Docker in System Settings → Network → Firewall.
 * Use an app password, never your main email password. `.env` is git-ignored.
 * Raw email bodies are stored in the database so they can be re-parsed later. Treat the database as
   sensitive.
