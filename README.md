@@ -17,6 +17,10 @@ cp .env.example .env        # fill in IMAP credentials + sender filter
 docker compose up -d        # postgres + web UI (http://localhost:8000) + worker (syncs every 5 min)
 ```
 
+The compose database is published on host port **5433**, so it doesn't clash with a Postgres you may
+already run on 5432. Change `FRAUDALERT_DB_HOST_PORT` / `FRAUDALERT_WEB_HOST_PORT` in `.env` if those
+ports are taken too.
+
 ## Quick start (local)
 
 ```bash
