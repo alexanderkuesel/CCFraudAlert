@@ -33,11 +33,9 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     from fraudalert import pipeline
-    from fraudalert.db import init_db, session_scope
+    from fraudalert.db import init_db
 
     init_db()
-    with session_scope() as session:
-        pipeline.seed_default_rules(session)
 
     if args.cmd == "init-db":
         print("database ready")

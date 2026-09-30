@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from fraudalert.config import get_settings
@@ -30,10 +30,27 @@ def get_engine():
     return _engine
 
 
-def init_db() -> None:
-    from fraudalert import models  # noqa: F401  (register tables)
+# Arbitrary constant identifying the schema-setup advisory lock.
+_INIT_LOCK_KEY = 0x46524155  # "FRAU"
 
-    Base.metadata.create_all(get_engine())
+
+def init_db() -> None:
+    """Create tables and seed default rules. Safe to call from several processes at once.
+
+    The web and worker containers both start at the same time; without the lock their
+    CREATE TABLEs race and one of them crashes on a duplicate-table error.
+    """
+    from fraudalert import models  # noqa: F401  (register tables)
+    from fraudalert.pipeline import seed_default_rules
+
+    with get_engine().begin() as conn:
+        if conn.dialect.name == "postgresql":
+            # Held until this transaction commits, i.e. until tables and seed rows exist.
+            conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _INIT_LOCK_KEY})
+        Base.metadata.create_all(conn)
+        with Session(bind=conn) as session:
+            seed_default_rules(session)
+            session.flush()
 
 
 @contextmanager
