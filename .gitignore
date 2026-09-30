@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.env
+*.db
+.pytest_cache/
+build/
+dist/
+examples/sample_emails/

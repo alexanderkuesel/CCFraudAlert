@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: fraudalert
+      POSTGRES_PASSWORD: fraudalert
+      POSTGRES_DB: fraudalert
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fraudalert"]
+      interval: 5s
+      retries: 10
+
+  web:
+    build: .
+    env_file: .env
+    environment:
+      FRAUDALERT_DATABASE_URL: postgresql+psycopg://fraudalert:fraudalert@db:5432/fraudalert
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: ["fraudalert", "watch", "--interval", "300"]
+    env_file: .env
+    environment:
+      FRAUDALERT_DATABASE_URL: postgresql+psycopg://fraudalert:fraudalert@db:5432/fraudalert
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

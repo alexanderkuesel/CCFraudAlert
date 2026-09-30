@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Fraud Alert{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+<header>
+  <span class="brand">🛡️ Fraud Alert</span>
+  <nav>
+    {% set p = request.url.path %}
+    <a href="/" class="{{ 'active' if p == '/' }}">Transactions</a>
+    <a href="/rules" class="{{ 'active' if p.startswith('/rules') }}">Rules</a>
+    <a href="/emails" class="{{ 'active' if p.startswith('/emails') }}">Emails</a>
+  </nav>
+  <form method="post" action="/sync"><button class="primary">Sync inbox</button></form>
+</header>
+<main>
+  {% if request.query_params.get('msg') %}<div class="flash">{{ request.query_params.get('msg') }}</div>{% endif %}
+  {% if request.query_params.get('error') %}<div class="flash error">{{ request.query_params.get('error') }}</div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

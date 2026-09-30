@@ -1,0 +1,96 @@
+import argparse
+import csv
+import logging
+import sys
+import time
+from pathlib import Path
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="fraudalert", description="Credit card fraud alert pipeline")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("init-db", help="create tables and seed the default rule")
+    sub.add_parser("sync", help="fetch new bank emails over IMAP once")
+    w = sub.add_parser("watch", help="sync on an interval (the long-running ingestion worker)")
+    w.add_argument("--interval", type=int, default=300, help="seconds between syncs (default 300)")
+    s = sub.add_parser("serve", help="run the web UI")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, default=8000)
+    s.add_argument("--sync-interval", type=int, default=0, help="also sync the inbox every N seconds")
+    i = sub.add_parser("import-eml", help="ingest saved .eml files")
+    i.add_argument("paths", nargs="+", type=Path)
+    r = sub.add_parser("reevaluate", help="re-score all transactions and re-apply current rules")
+    r.add_argument("--reparse", action="store_true", help="also retry emails that failed to parse")
+    e = sub.add_parser("export-features", help="write feature vectors + labels to CSV for model training")
+    e.add_argument("out", type=Path)
+
+    args = parser.parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    from fraudalert import pipeline
+    from fraudalert.db import init_db, session_scope
+
+    init_db()
+    with session_scope() as session:
+        pipeline.seed_default_rules(session)
+
+    if args.cmd == "init-db":
+        print("database ready")
+    elif args.cmd == "sync":
+        result = pipeline.sync_inbox()
+        print(result)
+        return 1 if result.errors else 0
+    elif args.cmd == "watch":
+        while True:
+            print(pipeline.sync_inbox(), flush=True)
+            time.sleep(args.interval)
+    elif args.cmd == "serve":
+        import threading
+
+        import uvicorn
+
+        from fraudalert.web.app import create_app
+
+        if args.sync_interval:
+            def loop() -> None:
+                while True:
+                    pipeline.sync_inbox()
+                    time.sleep(args.sync_interval)
+
+            threading.Thread(target=loop, daemon=True).start()
+        uvicorn.run(create_app(), host=args.host, port=args.port)
+    elif args.cmd == "import-eml":
+        files = [p for path in args.paths for p in (sorted(path.glob("*.eml")) if path.is_dir() else [path])]
+        print(pipeline.import_eml_files(files))
+    elif args.cmd == "reevaluate":
+        print(pipeline.reevaluate_all(reparse_failed=args.reparse))
+    elif args.cmd == "export-features":
+        export_features(args.out)
+    return 0
+
+
+def export_features(out: Path) -> None:
+    from sqlalchemy import select
+
+    from fraudalert.anomaly.features import FEATURE_NAMES, to_vector
+    from fraudalert.db import session_scope
+    from fraudalert.models import Transaction
+
+    with session_scope() as s, out.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["id", "occurred_at", *FEATURE_NAMES, "anomaly_score", "flagged", "label_fraud"])
+        n = 0
+        for t in s.scalars(select(Transaction).where(Transaction.features.is_not(None)).order_by(Transaction.occurred_at)):
+            label = "" if t.label_fraud is None else int(t.label_fraud)
+            writer.writerow([t.id, t.occurred_at.isoformat(), *to_vector(t.features), t.anomaly_score, int(t.flagged), label])
+            n += 1
+    print(f"wrote {n} rows to {out}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

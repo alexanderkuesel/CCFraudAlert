@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Rules · Fraud Alert{% endblock %}
+{% block content %}
+<div class="table-wrap" style="margin-bottom:1.25rem">
+<table>
+  <thead><tr><th>Rule</th><th>Logic</th><th>Severity</th><th>Hits</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rules %}
+    <tr>
+      <td><b>{{ r.name }}</b>{% if r.description %}<div class="muted">{{ r.description }}</div>{% endif %}</td>
+      <td><code>{{ describe(r) }}</code></td>
+      <td><span class="pill {{ r.severity }}">{{ r.severity }}</span></td>
+      <td class="num">{{ counts.get(r.id, 0) }}</td>
+      <td>{{ 'enabled' if r.enabled else 'disabled' }}</td>
+      <td style="white-space:nowrap">
+        <form class="inline" method="post" action="/rules/{{ r.id }}/toggle"><button class="link">{{ 'Disable' if r.enabled else 'Enable' }}</button></form>
+        <form class="inline" method="post" action="/rules/{{ r.id }}/delete" onsubmit="return confirm('Delete rule “{{ r.name }}”?')"><button class="link" style="color:var(--danger)">Delete</button></form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="muted">No rules yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<form class="card" method="post" action="/rules">
+  <h3 style="margin-top:0">New rule</h3>
+  <div class="grid">
+    <div><label>Name</label><input name="name" required style="width:100%" placeholder="Big purchase abroad"></div>
+    <div><label>Description</label><input name="description" style="width:100%"></div>
+    <div><label>Flag when</label>
+      <select name="match"><option value="all">ALL conditions match</option><option value="any">ANY condition matches</option></select></div>
+    <div><label>Severity</label>
+      <select name="severity">{% for s in severities %}<option {{ 'selected' if s == 'medium' }}>{{ s }}</option>{% endfor %}</select></div>
+  </div>
+  <label>Conditions</label>
+  <div id="conds">
+    <div class="cond-row">
+      <select name="field">{% for f in fields %}<option>{{ f }}</option>{% endfor %}</select>
+      <select name="op">{% for k, v in ops.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
+      <input name="value" placeholder="value (lists: comma separated)">
+    </div>
+  </div>
+  <p><button type="button" onclick="addCond()">+ condition</button> <button class="primary">Save &amp; apply to history</button></p>
+  <p class="muted" style="margin-bottom:0">
+    Fields: <code>amount</code>, <code>currency</code> (e.g. EUR), <code>merchant</code>, <code>card_last4</code>,
+    <code>is_foreign</code> (true/false), <code>hour</code> (0–23, local), <code>weekday</code> (0=Mon),
+    <code>anomaly_score</code> (0–1, from the anomaly model).
+  </p>
+</form>
+<script>
+function addCond() {
+  const box = document.getElementById('conds');
+  const row = box.firstElementChild.cloneNode(true);
+  row.querySelector('input').value = '';
+  box.appendChild(row);
+}
+</script>
+{% endblock %}
