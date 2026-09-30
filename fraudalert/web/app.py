@@ -2,11 +2,11 @@ import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -59,6 +59,16 @@ def create_app(init: bool = True) -> FastAPI:
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.globals.update(describe=lambda r: describe(RuleSpec(r.id, r.name, r.match, r.conditions)))
     templates.env.filters["local"] = _local
+
+    @app.middleware("http")
+    async def same_origin_only(request: Request, call_next):
+        """Block cross-site form posts. Browsers resend basic-auth credentials automatically, so
+        without this any web page you visit could POST to e.g. /rules/1/delete on your network."""
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            source = request.headers.get("origin") or request.headers.get("referer")
+            if source and urlsplit(source).netloc != request.headers.get("host"):
+                return PlainTextResponse("Cross-site request blocked", status_code=403)
+        return await call_next(request)
 
     def redirect(path: str, msg: str | None = None, error: str | None = None) -> RedirectResponse:
         q = {k: v for k, v in {"msg": msg, "error": error}.items() if v}

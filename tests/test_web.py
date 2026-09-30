@@ -53,3 +53,28 @@ def test_basic_auth(db, monkeypatch):
     assert client.get("/").status_code == 401
     assert client.get("/", auth=("me", "s3cret")).status_code == 200
     get_settings.cache_clear()
+
+
+def test_cross_site_posts_blocked(db):
+    client = TestClient(create_app(init=False))
+    form = {"name": "x", "match": "all", "field": ["amount"], "op": ["gt"], "value": ["1"]}
+    r = client.post("/rules", data=form, headers={"origin": "https://evil.example"}, follow_redirects=False)
+    assert r.status_code == 403
+    r = client.post("/rules/1/delete", headers={"referer": "http://evil.example/page"}, follow_redirects=False)
+    assert r.status_code == 403
+    assert client.post("/rules", data=form, headers={"origin": "http://testserver"}, follow_redirects=False).status_code == 303
+    assert client.get("/", headers={"origin": "https://evil.example"}).status_code == 200  # reads unaffected
+
+
+def test_refuses_network_exposure_without_password():
+    from fraudalert.cli import exposure_problem
+    from fraudalert.config import Settings
+
+    open_ = Settings(web_bind="0.0.0.0", web_username="", web_password="")
+    locked = Settings(web_bind="0.0.0.0", web_username="me", web_password="pw")
+    local = Settings(web_bind="127.0.0.1", web_username="", web_password="")
+    assert exposure_problem(open_, "0.0.0.0", in_container=True)
+    assert exposure_problem(locked, "0.0.0.0", in_container=True) is None
+    assert exposure_problem(local, "0.0.0.0", in_container=True) is None  # docker publishes on loopback only
+    assert exposure_problem(local, "0.0.0.0", in_container=False)  # bare `serve --host 0.0.0.0`
+    assert exposure_problem(local, "127.0.0.1", in_container=False) is None

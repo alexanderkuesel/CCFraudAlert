@@ -52,7 +52,13 @@ def main(argv: list[str] | None = None) -> int:
 
         import uvicorn
 
+        from fraudalert.config import get_settings
         from fraudalert.web.app import create_app
+
+        problem = exposure_problem(get_settings(), args.host, in_container=Path("/.dockerenv").exists())
+        if problem:
+            print(problem, file=sys.stderr)
+            return 2
 
         if args.sync_interval:
             def loop() -> None:
@@ -70,6 +76,25 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "export-features":
         export_features(args.out)
     return 0
+
+
+LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+
+
+def exposure_problem(settings, host: str, in_container: bool) -> str | None:
+    """Refuse to serve transactions to the network without a password.
+
+    In a container the server always listens on 0.0.0.0 and docker decides exposure from
+    FRAUDALERT_WEB_BIND; outside one, --host decides.
+    """
+    exposed = settings.web_bind not in LOOPBACK if in_container else host not in LOOPBACK
+    if exposed and not settings.auth_enabled:
+        return (
+            "Refusing to start: the web UI would be reachable from other machines without a password.\n"
+            "Set FRAUDALERT_WEB_USERNAME and FRAUDALERT_WEB_PASSWORD in .env, "
+            "or keep FRAUDALERT_WEB_BIND=127.0.0.1 / --host 127.0.0.1."
+        )
+    return None
 
 
 def export_features(out: Path) -> None:

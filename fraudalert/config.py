@@ -22,12 +22,17 @@ class Settings(BaseSettings):
     detector: str = "baseline"
     notify_webhook_url: str = ""
 
+    web_bind: str = "127.0.0.1"  # host interface docker compose publishes the UI on
     web_username: str = ""
     web_password: str = ""
 
     @staticmethod
     def _split(value: str) -> list[str]:
         return [v.strip() for v in value.split(",") if v.strip()]
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.web_username and self.web_password)
 
     @property
     def senders(self) -> list[str]:
