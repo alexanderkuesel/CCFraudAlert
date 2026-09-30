@@ -69,7 +69,8 @@ A rule is a list of conditions joined by **ALL** (AND) or **ANY** (OR). The defa
 | `currency`      | text   | ISO code, e.g. `EUR`                                       |
 | `merchant`      | text   | case-insensitive                                           |
 | `card_last4`    | text   |                                                            |
-| `is_foreign`    | bool   | the purchase country ≠ `FRAUDALERT_HOME_COUNTRY` when the email names one; otherwise currency ≠ home currency, or the email says "foreign transaction" |
+| `is_foreign`    | bool   | bought outside `FRAUDALERT_HOME_COUNTRY` (when the email names a country, or says "foreign transaction"), **or** in a currency that isn't one of your normal currencies |
+| `unusual_currency` | bool | currency isn't one of your normal currencies (Settings page / `FRAUDALERT_NORMAL_CURRENCIES`) |
 | `hour`          | number | 0–23 in `FRAUDALERT_TIMEZONE`                              |
 | `weekday`       | number | 0 = Monday                                                 |
 | `anomaly_score` | number | 0–1 from the anomaly detector (empty until ~10 transactions of history) |
@@ -128,6 +129,7 @@ Rica setup:
 
 ```bash
 FRAUDALERT_HOME_CURRENCY=USD            # or CRC; colones/dollars are converted either way
+FRAUDALERT_NORMAL_CURRENCIES=CRC,USD    # anything else counts as foreign (also on the Settings page)
 FRAUDALERT_HOME_COUNTRY=Costa Rica
 FRAUDALERT_TIMEZONE=America/Costa_Rica
 ```

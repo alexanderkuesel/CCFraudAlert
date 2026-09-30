@@ -26,7 +26,7 @@
   {% for t in rows %}
     <tr class="{{ 'flagged' if t.flagged }}">
       <td class="muted" style="white-space:nowrap">{{ t.occurred_at | local }}</td>
-      <td>{{ t.merchant or '—' }}{% if t.is_foreign %} <span class="pill foreign">foreign</span>{% endif %}</td>
+      <td>{{ t.merchant or '—' }}{% if t.is_foreign or t.currency not in normal %} <span class="pill foreign">foreign</span>{% endif %}</td>
       <td class="muted" style="white-space:nowrap">{{ ('…' ~ t.card_last4) if t.card_last4 else '' }}</td>
       <td class="num">{{ '{:,.2f}'.format(t.amount) }} {{ t.currency }}</td>
       <td class="num">{{ '%.2f' % t.anomaly_score if t.anomaly_score is not none else '—' }}</td>

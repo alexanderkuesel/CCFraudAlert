@@ -38,7 +38,7 @@ def test_end_to_end_import_rules_and_reevaluate(db, tmp_path):
         flagged = {t.merchant for t in s.scalars(select(Transaction).where(Transaction.flagged.is_(True)))}
         assert flagged == {"BEST BUY", "BOULANGERIE PAUL"}
         eur = s.scalar(select(Transaction).where(Transaction.merchant == "BOULANGERIE PAUL"))
-        assert eur.is_foreign and eur.currency == "EUR"
+        assert eur.currency == "EUR" and eur.flagged  # EUR isn't a normal currency (default: home = USD)
         assert eur.anomaly_score is not None and eur.features["is_foreign"] == 1.0
         first = s.scalars(select(Transaction).order_by(Transaction.occurred_at)).first()
         assert first.anomaly_score is None  # not enough history yet
@@ -117,6 +117,7 @@ def test_bac_country_currency_and_local_time(db, tmp_path, monkeypatch):
     monkeypatch.setenv("FRAUDALERT_HOME_COUNTRY", "Costa Rica")
     monkeypatch.setenv("FRAUDALERT_TIMEZONE", "America/Costa_Rica")
     monkeypatch.setenv("FRAUDALERT_FX_RATES", "CRC=0.002")
+    monkeypatch.setenv("FRAUDALERT_NORMAL_CURRENCIES", "CRC,USD")
     get_settings.cache_clear()
     sent = NOW - timedelta(days=1)
     files = []
@@ -154,3 +155,39 @@ def test_reparse_all_fixes_old_parses_and_keeps_labels(db, tmp_path):
     with db.session_scope() as s:
         txn = s.scalar(select(Transaction))
         assert (txn.id, txn.merchant, txn.label_fraud) == (txn_id, "GLOBAL-E", False)
+
+
+def test_normal_currencies_preference(db, tmp_path, monkeypatch):
+    """CRC and USD are normal; anything else is foreign even when bought in Costa Rica.
+    Changing the preference applies on re-evaluation, without re-parsing."""
+    from fraudalert import prefs
+    from fraudalert.config import get_settings
+
+    from .bac import bac_eml
+
+    monkeypatch.setenv("FRAUDALERT_HOME_COUNTRY", "Costa Rica")
+    get_settings.cache_clear()
+    with db.session_scope() as s:
+        prefs.set_normal_currencies(s, ["CRC", "USD"])
+    sent = NOW - timedelta(days=1)
+    files = []
+    for name, place, amount in [("SODA TICA", "HEREDIA, Costa Rica", "CRC 4,500.00"),
+                                ("AMAZON", "SEATTLE, Estados Unidos", "USD 20.00"),
+                                ("DUTY FREE", "ALAJUELA, Costa Rica", "EUR 30.00"),
+                                ("PULPERIA", "HEREDIA, Costa Rica", "USD 12.00")]:
+        p = tmp_path / f"{name}.eml"
+        p.write_bytes(bac_eml(sent, merchant=name, place=place, amount=amount))
+        files.append(p)
+    pipeline.import_eml_files(files)
+
+    def flagged():
+        with db.session_scope() as s:
+            return {t.merchant for t in s.scalars(select(Transaction).where(Transaction.flagged.is_(True)))}
+
+    # AMAZON: abroad (USD is fine, the country isn't). DUTY FREE: EUR isn't a normal currency.
+    assert flagged() == {"AMAZON", "DUTY FREE"}
+    with db.session_scope() as s:
+        prefs.set_normal_currencies(s, ["CRC"])  # now USD is unusual too
+    pipeline.reevaluate_all()
+    assert flagged() == {"AMAZON", "DUTY FREE", "PULPERIA"}
+    get_settings.cache_clear()

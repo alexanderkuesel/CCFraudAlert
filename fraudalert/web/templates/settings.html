@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Settings · Fraud Alert{% endblock %}
+{% block content %}
+<form class="card" method="post" action="/settings">
+  <h3 style="margin-top:0">Normal currencies</h3>
+  <p class="muted">Currencies you usually pay in. A purchase in any other currency counts as
+    <b>foreign</b> (and matches <code>unusual_currency = true</code>), so your rules can flag it.
+    Saving re-applies your rules to every transaction.</p>
+  <label for="nc">Comma-separated currency codes</label>
+  <input id="nc" name="normal_currencies" value="{{ normal }}" placeholder="CRC, USD" style="width:min(100%,320px)">
+  <button class="primary">Save</button>
+  <p class="muted" style="margin-bottom:0">Default from <code>FRAUDALERT_NORMAL_CURRENCIES</code> / home currency: {{ default_normal }}</p>
+</form>
+
+<div class="card">
+  <h3 style="margin-top:0">From <code>.env</code></h3>
+  <p class="muted">Change these in <code>.env</code> and restart (<code>docker compose up -d</code>).</p>
+  <table>
+    <tr><td>Home currency (rule amounts are converted to it)</td><td><code>{{ settings.home_currency }}</code></td></tr>
+    <tr><td>Home country (purchases elsewhere are foreign)</td><td><code>{{ settings.home_country or '— not set' }}</code></td></tr>
+    <tr><td>Timezone</td><td><code>{{ settings.timezone }}</code></td></tr>
+    <tr><td>Exchange-rate overrides</td><td><code>{{ settings.fx_rates or '— built-in approximate rates' }}</code></td></tr>
+  </table>
+</div>
+{% endblock %}

@@ -20,7 +20,8 @@ FIELDS: dict[str, type] = {
     "currency": str,
     "merchant": str,
     "card_last4": str,
-    "is_foreign": bool,
+    "is_foreign": bool,  # bought outside your home country, or in a currency you don't normally use
+    "unusual_currency": bool,  # currency not in your normal currencies (Settings page)
     "hour": int,  # 0-23, local time
     "weekday": int,  # 0=Mon .. 6=Sun
     "anomaly_score": float,  # 0..1 from the anomaly detector, None until enough history

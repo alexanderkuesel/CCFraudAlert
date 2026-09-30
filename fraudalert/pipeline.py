@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from fraudalert.anomaly import AnomalyDetector, get_detector
 from fraudalert.anomaly.features import TxnView, compute_features
 from fraudalert.config import Settings, get_settings
+from fraudalert import prefs
 from fraudalert.fx import Converter, parse_rates
 from fraudalert.db import SYNC_LOCK_KEY, session_scope, try_advisory_lock
 from fraudalert.ingest.message import EmailMessage, parse_rfc822
@@ -51,33 +52,43 @@ _ENV_CACHE: dict[tuple, "Env"] = {}
 
 @dataclass
 class Env:
-    """Per-user context for interpreting transactions: local timezone and currency conversion."""
+    """Per-user context for interpreting transactions: local timezone, currency conversion, and
+    what counts as normal (home country, usual currencies)."""
 
     tz: ZoneInfo
     fx: Converter
     home_currency: str
     home_countries: set[str]
+    normal_currencies: frozenset[str]
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> "Env":
-        key = (settings.timezone, settings.home_currency, settings.fx_rates, settings.home_country)
+    def load(cls, session: Session, settings: Settings) -> "Env":
+        normal = frozenset(prefs.normal_currencies(session, settings))
+        key = (settings.timezone, settings.home_currency, settings.fx_rates, settings.home_country, normal)
         if key not in _ENV_CACHE:
-            _ENV_CACHE[key] = cls._build(settings)
+            _ENV_CACHE[key] = cls(
+                tz=ZoneInfo(settings.timezone),
+                fx=Converter(settings.home_currency, parse_rates(settings.fx_rates)),
+                home_currency=settings.home_currency.upper(),
+                home_countries={_fold(c) for c in settings.home_country.split(",") if c.strip()},
+                normal_currencies=normal,
+            )
         return _ENV_CACHE[key]
 
-    @classmethod
-    def _build(cls, settings: Settings) -> "Env":
-        return cls(
-            tz=ZoneInfo(settings.timezone),
-            fx=Converter(settings.home_currency, parse_rates(settings.fx_rates)),
-            home_currency=settings.home_currency.upper(),
-            home_countries={_fold(c) for c in settings.home_country.split(",") if c.strip()},
-        )
-
-    def is_foreign(self, parsed: ParsedTransaction) -> bool:
+    def foreign_location(self, parsed: ParsedTransaction) -> bool:
+        """Stored as Transaction.is_foreign: did the purchase happen abroad? Uses the country the
+        email names when FRAUDALERT_HOME_COUNTRY is set, else phrases like "foreign transaction".
+        The currency side is judged at evaluation time (see `is_foreign`), so changing your normal
+        currencies only needs a re-evaluation, not a re-parse."""
         if parsed.country and self.home_countries:
             return _fold(parsed.country) not in self.home_countries
-        return parsed.currency != self.home_currency or parsed.foreign_hint
+        return parsed.foreign_hint
+
+    def unusual_currency(self, txn: Transaction) -> bool:
+        return txn.currency.upper() not in self.normal_currencies
+
+    def is_foreign(self, txn: Transaction) -> bool:
+        return bool(txn.is_foreign) or self.unusual_currency(txn)
 
     def localize(self, dt: datetime) -> datetime:
         """Dates written in an email without a timezone are the user's local time."""
@@ -89,7 +100,7 @@ def _view(txn: Transaction, env: Env) -> TxnView:
         occurred_at=_as_utc(txn.occurred_at).astimezone(env.tz),
         amount=env.fx.to_home(float(txn.amount), txn.currency),
         merchant=txn.merchant or "",
-        is_foreign=bool(txn.is_foreign),
+        is_foreign=env.is_foreign(txn),
     )
 
 
@@ -102,7 +113,8 @@ def transaction_context(txn: Transaction, env: Env) -> dict:
         "currency": txn.currency,
         "merchant": txn.merchant or "",
         "card_last4": txn.card_last4,
-        "is_foreign": bool(txn.is_foreign),
+        "is_foreign": env.is_foreign(txn),
+        "unusual_currency": env.unusual_currency(txn),
         "hour": local.hour,
         "weekday": local.weekday(),
         "anomaly_score": txn.anomaly_score,
@@ -173,7 +185,7 @@ def ingest_message(
 def _parse_into_transaction(session, raw, settings, detector, rules, result) -> Transaction | None:
     """Parse a stored email into its transaction, creating it or updating it in place (so a
     re-parse keeps the transaction's id and your fraud/legit label)."""
-    env = Env.from_settings(settings)
+    env = Env.load(session, settings)
     msg = EmailMessage(raw.message_id, raw.sender, raw.subject, raw.received_at, raw.body)
     try:
         parsed, parser_name = parse_email(msg, settings.home_currency)
@@ -193,7 +205,7 @@ def _parse_into_transaction(session, raw, settings, detector, rules, result) -> 
     txn.currency = parsed.currency
     txn.merchant = parsed.merchant
     txn.card_last4 = parsed.card_last4
-    txn.is_foreign = env.is_foreign(parsed)
+    txn.is_foreign = env.foreign_location(parsed)
     is_new = txn.id is None
     session.add(txn)
     session.flush()
@@ -302,9 +314,9 @@ def reevaluate_all(settings: Settings | None = None, reparse: str = "none") -> S
         raise ValueError(f"reparse must be none, failed or all, not {reparse!r}")
     settings = settings or get_settings()
     detector = get_detector(settings.detector)
-    env = Env.from_settings(settings)
     result = SyncResult()
     with session_scope() as session:
+        env = Env.load(session, settings)
         rules = load_rules(session)
         if reparse != "none":
             quiet = settings.model_copy(update={"notify_webhook_url": ""})

@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     lookback_days: int = 90
 
     home_currency: str = "USD"  # rules and anomaly features compare amounts in this currency
+    # Currencies you normally pay in, e.g. "CRC,USD"; any other currency counts as foreign.
+    # Defaults to the home currency. Editable on the web UI's Settings page (which takes precedence).
+    normal_currencies: str = ""
     home_country: str = ""  # e.g. "Costa Rica"; when the email names a country, others count as foreign
     fx_rates: str = ""  # overrides for fraudalert/fx.py, e.g. "CRC=0.00195" (1 CRC in home currency)
     timezone: str = "America/New_York"  # your local time: email dates, hour-of-day rules and features
