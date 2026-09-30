@@ -135,6 +135,27 @@ curl -X POST localhost:8000/api/rules -H 'content-type: application/json' -d '{
 
 Other endpoints: `GET /api/transactions?flagged=true`, `GET /api/rules`, `DELETE /api/rules/{id}`, `POST /api/sync`.
 
+## Filtering and bulk edits
+
+The alarm summary's **Filters** panel narrows whichever view you're in (Unacknowledged, All alarms, Journal):
+priority, state (unacknowledged / fraud / legit / no alarm), date range (local time), amount (home
+currency, the same converted amount rules use), merchant or currency text, card, foreign, alarm rule,
+and minimum anomaly score. Filters live in the URL, so back/forward work and a filtered view can be
+bookmarked. Each active filter shows as a chip; click its ✕ to drop just that one.
+
+Tick rows (or the header box for the whole page) to act on several at once: **Ack · Legit**, **Ack ·
+Fraud**, **Clear ack**, or **Set comment** (empty clears it). When a whole page is selected and more rows
+match, **Select all N matching** extends the action to every row the filters match, across pages. Bulk
+fraud, and any "all matching" action, asks for confirmation first. Typical use: filter to `netflix`,
+select all, **Ack · Legit**.
+
+The same is available over the API:
+
+```bash
+curl -X POST localhost:8000/api/transactions/bulk -H 'content-type: application/json' \
+     -d '{"ids": [12, 13, 14], "action": "legit"}'        # legit | fraud | clear | comment (+ "comment")
+```
+
 ## Network map
 
 The **Network** page complements the alarm summary. It draws your cards (squares) and the merchants they were used at (circles, sized by
