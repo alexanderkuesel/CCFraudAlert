@@ -64,3 +64,60 @@ tr.label-legit .alert-reason { color: var(--muted); text-decoration: line-throug
 .comment-form input { width: 100%; min-width: 140px; font-size: 13px; background: transparent; border-color: transparent; border-bottom-color: var(--border); border-radius: 0; }
 .comment-form input:hover, .comment-form input:focus { background: var(--card); border-color: var(--border); border-radius: 6px; outline: none; }
 .comment-status { font-size: 11px; color: var(--muted); white-space: nowrap; font-weight: 400; }
+
+/* ---------- Network page ---------- */
+.net {
+  /* Status palette (fixed across themes). Never color alone: every state also has a glyph + label. */
+  --st-fraud: #d03b3b; --st-flagged: #ec835a; --st-legit: #0ca30c;
+  --st-normal: #c3c2b7; --foreign: #2a78d6; --edge: #c3c2b7; --card-node: #0b0b0b; --halo: var(--card);
+}
+@media (prefers-color-scheme: dark) {
+  .net { --st-normal: #52514e; --foreign: #3987e5; --edge: #383835; --card-node: #ffffff; }
+}
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; padding: .35rem .7rem; background: var(--card); }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); font-weight: 600; }
+.switch { display: inline-flex; gap: .35rem; align-items: center; margin: 0; color: inherit; font-size: inherit; }
+.net-legend { display: flex; flex-wrap: wrap; gap: .4rem 1.1rem; list-style: none; padding: 0; margin: 0 0 .75rem; font-size: 13px; }
+.net-legend li { display: inline-flex; align-items: center; gap: .4rem; }
+.key-node { width: 16px; height: 16px; border-radius: 50%; display: inline-grid; place-items: center; color: #fff; font-size: 10px; font-weight: 800; }
+.key-ring { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
+.key-card { width: 12px; height: 12px; border-radius: 3px; background: var(--card-node); display: inline-block; }
+.st-fraud { background: var(--st-fraud); } .st-flagged { background: var(--st-flagged); }
+.st-legit { background: var(--st-legit); } .st-normal { background: var(--st-normal); }
+.ring-new { border: 2px dashed var(--fg); } .ring-foreign { border: 2.5px solid var(--foreign); }
+.net-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 1rem; align-items: start; }
+@media (max-width: 860px) { .net-body { grid-template-columns: 1fr; } }
+.net-canvas { position: relative; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+#net-svg { display: block; width: 100%; height: min(62vh, 620px); touch-action: none; }
+@media (max-width: 600px) { #net-svg { height: 440px; } }
+.net-empty { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; pointer-events: none; }
+.net-empty[hidden], .net-tooltip[hidden] { display: none; }
+.net-detail { position: sticky; top: 1rem; margin: 0; font-size: 13px; }
+.net-detail h4 { margin: 0 0 .5rem; font-size: 15px; word-break: break-word; }
+.net-detail dl { display: grid; grid-template-columns: auto 1fr; gap: .2rem .6rem; margin: 0 0 .75rem; }
+.net-detail dt { color: var(--muted); } .net-detail dd { margin: 0; font-variant-numeric: tabular-nums; }
+.net-tooltip { position: absolute; pointer-events: none; z-index: 5; background: var(--card); border: 1px solid var(--border);
+  border-radius: 6px; padding: .45rem .6rem; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.15); max-width: 260px; }
+.net-tooltip b { font-size: 14px; display: block; }
+.net-tooltip .tt-name { color: var(--muted); display: block; margin-bottom: .25rem; word-break: break-word; }
+/* SVG marks */
+.edge { stroke: var(--edge); stroke-linecap: round; fill: none; }
+.edge.flag { stroke: var(--st-flagged); } .edge.fraud { stroke: var(--st-fraud); }
+.node { cursor: pointer; outline: none; }
+.node .body { stroke: var(--halo); stroke-width: 2; }
+.node.card .body { fill: var(--card-node); }
+.node.fraud .body { fill: var(--st-fraud); } .node.flagged .body { fill: var(--st-flagged); }
+.node.legit .body { fill: var(--st-legit); } .node.normal .body { fill: var(--st-normal); }
+.node .glyph { fill: #fff; font-weight: 800; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.node .ring-foreign { fill: none; stroke: var(--foreign); stroke-width: 2.5; }
+.node .ring-new { fill: none; stroke: var(--fg); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.node .hit { fill: transparent; }
+.node:hover .body, .node:focus-visible .body, .node.selected .body { stroke: var(--fg); stroke-width: 2.5; }
+.label { font-size: 11px; fill: var(--fg); paint-order: stroke; stroke: var(--halo); stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
+.label.card-label { font-weight: 700; font-size: 12px; }
+.dim { opacity: .12; transition: opacity .15s; }
+.quiet { opacity: .25; }
+.status-cell { white-space: nowrap; }
+.status-cell .key-node { width: 14px; height: 14px; font-size: 9px; vertical-align: -2px; margin-right: .3rem; }

@@ -88,6 +88,21 @@ curl -X POST localhost:8000/api/rules -H 'content-type: application/json' -d '{
 
 Other endpoints: `GET /api/transactions?flagged=true`, `GET /api/rules`, `DELETE /api/rules/{id}`, `POST /api/sync`.
 
+## Network map
+
+The **Network** page draws your cards (squares) and the merchants they were used at (circles, sized by
+total spend) as a graph, so unusual patterns stand out at a glance:
+
+* **Colour + glyph = review state:** ✕ red = you marked fraud, ! orange = flagged and not yet reviewed,
+  ✓ green = flagged but you marked it legit, grey = normal. The colour is never the only signal:
+  every state also has a glyph, a label, and a row in the table below the map.
+* **Dashed ring** = new merchant (first purchase in the last 14 days). **Blue ring** = foreign.
+* **Hover** a node to see only its connections (which cards used this merchant, or where this card
+  was used). **Click** it to pin the details, with a link to its transactions.
+* **Highlight anomalies** fades everything normal, leaving flagged, new and foreign merchants.
+* Typical things to look for: a new foreign merchant hanging off one card, a burst of tiny charges at a
+  new merchant (card testing), or a merchant only one card has ever used with a large total.
+
 ## Notifications
 
 Set `FRAUDALERT_NOTIFY_WEBHOOK_URL` to get a POST for every newly flagged transaction. The payload has

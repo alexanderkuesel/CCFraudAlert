@@ -13,6 +13,7 @@
   <nav>
     {% set p = request.url.path %}
     <a href="/" class="{{ 'active' if p == '/' }}">Transactions</a>
+    <a href="/network" class="{{ 'active' if p.startswith('/network') }}">Network</a>
     <a href="/rules" class="{{ 'active' if p.startswith('/rules') }}">Rules</a>
     <a href="/emails" class="{{ 'active' if p.startswith('/emails') }}">Emails</a>
     <a href="/settings" class="{{ 'active' if p.startswith('/settings') }}">Settings</a>

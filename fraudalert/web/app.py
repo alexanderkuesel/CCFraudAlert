@@ -24,6 +24,7 @@ HERE = Path(__file__).parent
 PAGE_SIZE = 50
 SEVERITIES = ["low", "medium", "high"]
 COMMENT_MAX = 1000
+NETWORK_RANGES = {"30": 30, "90": 90, "365": 365, "all": None}
 
 _basic = HTTPBasic(auto_error=False)
 
@@ -133,6 +134,24 @@ def create_app(init: bool = True) -> FastAPI:
         if request.headers.get("x-requested-with") == "fetch":  # inline save from the table
             return PlainTextResponse("saved")
         return RedirectResponse(request.headers.get("referer") or "/", status_code=303)
+
+    @app.get("/network")
+    def network_page(request: Request, days: str = "90"):
+        from fraudalert.network import NEW_MERCHANT_DAYS
+
+        return templates.TemplateResponse(request, "network.html", {
+            "days": days if days in NETWORK_RANGES else "90", "new_days": NEW_MERCHANT_DAYS,
+        })
+
+    @app.get("/api/network")
+    def api_network(days: str = "90"):
+        from fraudalert.network import build_network
+
+        if days not in NETWORK_RANGES:
+            raise HTTPException(422, f"days must be one of {sorted(NETWORK_RANGES)}")
+        with session_scope() as s:
+            env = pipeline.Env.load(s, get_settings())
+            return build_network(s, env, NETWORK_RANGES[days])
 
     @app.get("/rules")
     def rules_page(request: Request):
