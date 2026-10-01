@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from fraudalert.anomaly.explain import summary
 from fraudalert.config import Settings, get_settings
 from fraudalert.db import session_scope
 from fraudalert.models import Alert, SyncState, Transaction
@@ -172,6 +173,8 @@ def build_report(session: Session, settings: Settings, since: datetime, until: d
             lines.append(f"  [{PRIORITY_LABEL[_priority(t) or 3]}] {when(t)}  {money(t)}  {t.merchant}  "
                          f"card …{t.card_last4 or '????'}  auth {t.auth_code or '-'}  ref {t.reference or '-'}  "
                          f"({_alarm_names(t)})")
+            if t.anomaly_reasons:
+                lines.append(f"      why unusual: {summary(t.anomaly_reasons)}")
         lines.append("")
     else:
         lines += ["No unacknowledged alarms. All clear.", ""]
@@ -228,6 +231,8 @@ def build_report(session: Session, settings: Settings, since: datetime, until: d
                 f'<div style="font-size:13px">Authorization <b style="font-family:monospace;font-size:15px">'
                 f'{e(t.auth_code or "—")}</b>{ref}</div>'
                 + (f'<div style="color:#5b5e63;font-size:12px">{e(_alarm_names(t))}</div>' if t.alerts else "")
+                + (f'<div style="font-size:12px"><b>Why unusual:</b> {e(summary(t.anomaly_reasons))}</div>'
+                   if t.anomaly_reasons else "")
                 + "</div>"
             )
         if len(rows) > MAX_ROWS:

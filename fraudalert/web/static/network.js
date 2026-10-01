@@ -23,6 +23,9 @@
   const empty = document.getElementById("net-empty");
   const summary = document.getElementById("net-summary");
   const onlyAnomalies = document.getElementById("only-anomalies");
+  const limitInput = document.getElementById("limit"), limitOut = document.getElementById("limit-out");
+  const limitSummary = document.getElementById("limit-summary");
+  let limit = null; // anomaly limit for the slider; first set from the alarm rule's threshold
   const tbody = document.querySelector("#net-table tbody");
   let data = null, currency = "", selected = null;
 
@@ -40,7 +43,19 @@
   };
   const money = v => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " " + currency;
   const date = iso => new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-  const isAnomalous = n => n.kind === "merchant" && (n.state !== "normal" && n.state !== "legit" || n.new || n.foreign);
+  const beyond = n => n.kind === "merchant" && (n.scores || []).filter(x => x >= limit).length;
+  const isAnomalous = n => n.kind === "merchant" &&
+    (n.state !== "normal" && n.state !== "legit" || n.new || n.foreign || beyond(n) > 0);
+  // Halo = how unusual this merchant is overall: the share of its transactions the model rates in the
+  // top ~15% of your history (score >= 0.85). Using the merchant's single highest score instead would light
+  // up every merchant you use often. A single odd transaction is what the "beyond the limit" ring is for.
+  const HALO_FROM = 0.85, HALO_MIN_SHARE = 0.25;
+  const haloT = n => {
+    const sc = n.scores || [];
+    if (!sc.length) return 0;
+    const share = sc.filter(x => x >= HALO_FROM).length / sc.length;
+    return share >= HALO_MIN_SHARE ? share : 0;
+  };
 
   // Deterministic PRNG so the same data lays out the same way on every load.
   function rng(seed) {
@@ -138,7 +153,9 @@
     const maxChars = W < 600 ? 14 : 26;
     nodes.forEach(n => {
       n.r = radius(n, maxTotal);
-      n.foot = n.r + (n.foreign ? 4 : 0) + (n.new ? 4 : 0); // collision footprint includes the rings
+      // collision footprint includes the rings; reserve the "beyond limit" ring for anything that could cross it
+      n.ringAt = n.r + (n.foreign ? 4 : 0) + (n.new ? 4 : 0) + 5;
+      n.foot = n.kind === "merchant" && (n.max_score || 0) >= 0.8 ? n.ringAt + 2 : n.ringAt - 5;
       // Labels: every card and flagged/fraud/legit/new merchant, plus the biggest spenders. Others on hover.
       n.showLabel = n.kind === "card" || n.state !== "normal" || n.new || topSpend.has(n.id);
       n.text = n.label.length > maxChars ? n.label.slice(0, maxChars - 1) + "…" : n.label;
@@ -168,12 +185,15 @@
       if (n.kind === "card") {
         el("rect", { x: -n.r, y: -n.r, width: 2 * n.r, height: 2 * n.r, rx: 4, class: "body" }, g);
       } else {
+        const t = haloT(n);
+        if (t > 0) el("circle", { r: n.r + 5 + 11 * t, class: "halo", "fill-opacity": (0.15 + 0.35 * t).toFixed(2) }, g);
+        if ((n.max_score || 0) >= 0.8) el("circle", { r: n.ringAt, class: "ring-limit" }, g);
         if (n.foreign) el("circle", { r: n.r + 4, class: "ring-foreign" }, g);
         if (n.new) el("circle", { r: n.r + (n.foreign ? 8 : 4), class: "ring-new" }, g);
         el("circle", { r: n.r, class: "body" }, g);
         if (STATES[n.state].glyph) {
-          const t = el("text", { class: "glyph", "font-size": Math.max(9, Math.min(n.r * 1.1, 16)) }, g);
-          t.textContent = STATES[n.state].glyph;
+          const glyph = el("text", { class: "glyph", "font-size": Math.max(9, Math.min(n.r * 1.1, 16)) }, g);
+          glyph.textContent = STATES[n.state].glyph;
         }
       }
       const label = el("text", { x: n.x + n.foot + 5, y: n.y + 4,
@@ -211,18 +231,31 @@
         const quiet = onlyAnomalies.checked && !e.line.classList.contains("alarm");
         e.line.classList.toggle("quiet", !near && quiet);
       }
-      for (const [nid, g] of nodeEls) g.classList.toggle("selected", nid === selected);
+      for (const [nid, g] of nodeEls) {
+        g.classList.toggle("selected", nid === selected);
+        const n = nodes.find(x => x.id === nid);
+        g.classList.toggle("beyond", beyond(n) > 0);
+        g.setAttribute("aria-label", ariaLabel(n));
+      }
     }
     render.highlight = highlight;
-    highlight(selected);
-    renderTable(merchants);
+    render.applyLimit = () => {
+      highlight(selected);
+      renderTable(merchants);
+      const over = merchants.filter(n => beyond(n) > 0);
+      const txns = over.reduce((a, n) => a + beyond(n), 0);
+      limitSummary.textContent = `${over.length} merchant${over.length === 1 ? "" : "s"} · ${txns} transaction${txns === 1 ? "" : "s"} beyond ${limit.toFixed(2)}`;
+      if (selected) showDetail(nodes.find(x => x.id === selected)); // keep a pinned node's numbers current
+    };
+    render.applyLimit();
     summary.textContent = `${nodes.filter(n => n.kind === "card").length} cards · ${merchants.length} merchants · `
       + `${merchants.filter(n => UNACK.has(n.state)).length} with unacknowledged alarms, ${merchants.filter(n => n.state === "fraud").length} fraud`;
   }
 
   function ariaLabel(n) {
     if (n.kind === "card") return `${n.label}: ${n.count} transactions, ${money(n.total)}`;
-    const extra = [n.new && "new merchant", n.foreign && "foreign"].filter(Boolean).join(", ");
+    const extra = [n.new && "new merchant", n.foreign && "foreign",
+      beyond(n) > 0 && `${beyond(n)} transaction(s) beyond the anomaly limit`].filter(Boolean).join(", ");
     return `${n.label}: ${STATES[n.state].label}, ${n.count} transactions, ${money(n.total)}${extra ? ", " + extra : ""}`;
   }
 
@@ -234,8 +267,14 @@
       ? [`${n.count} transactions`]
       : [STATES[n.state].label, `${n.count} transaction${n.count === 1 ? "" : "s"} · ${n.cards} card${n.cards === 1 ? "" : "s"}`,
          `First purchase ${date(n.first_seen)}${n.new ? " (new)" : ""}`, n.foreign ? "Foreign" : null,
-         n.max_score != null ? `Highest anomaly score ${n.max_score.toFixed(2)}` : null];
+         haloT(n) ? `${Math.round(haloT(n) * 100)}% of its transactions look unusual (≥ ${HALO_FROM})` : null,
+         n.max_score != null ? `Highest anomaly score ${n.max_score.toFixed(2)}` +
+           (beyond(n) ? ` · ${beyond(n)} beyond the ${limit.toFixed(2)} limit` : "") : null];
     lines.filter(Boolean).forEach(t => tooltip.appendChild(html("div", t)));
+    if (n.reasons && n.reasons.length) {
+      tooltip.appendChild(html("div", "Why unusual:", "tt-why-h"));
+      n.reasons.forEach(r => tooltip.appendChild(html("div", "• " + r, "tt-why")));
+    }
     tooltip.hidden = false;
     const box = canvas.getBoundingClientRect();
     let x, y;
@@ -249,6 +288,10 @@
   function select(n) {
     selected = selected === n.id ? null : n.id;
     render.highlight(selected);
+    showDetail(n);
+  }
+
+  function showDetail(n) {
     detail.replaceChildren();
     if (!selected) {
       detail.appendChild(html("p", "Hover a node to see its connections. Click (or Tab + Enter) to pin its details here.", "muted"));
@@ -266,8 +309,15 @@
       add("Last purchase", date(n.last_seen));
       add("Foreign", n.foreign ? "Yes" : "No");
       add("Max anomaly", n.max_score != null ? n.max_score.toFixed(2) : "—");
+      add(`Beyond ${limit.toFixed(2)}`, `${beyond(n)} of ${n.count}`);
     }
     detail.appendChild(dl);
+    if (n.reasons && n.reasons.length) {
+      detail.appendChild(html("p", "Why unusual", "why-h"));
+      const ul = document.createElement("ul"); ul.className = "why";
+      n.reasons.forEach(r => ul.appendChild(html("li", r)));
+      detail.appendChild(ul);
+    }
     if (n.kind === "merchant") {
       const a = html("a", "View these transactions →");
       a.href = "/?q=" + encodeURIComponent(n.query);
@@ -279,7 +329,7 @@
     tbody.replaceChildren();
     const rows = [...merchants].sort((a, b) => STATE_RANK[a.state] - STATE_RANK[b.state] || b.total - a.total);
     if (!rows.length) {
-      const tr = tbody.insertRow(); const td = tr.insertCell(); td.colSpan = 8; td.className = "muted";
+      const tr = tbody.insertRow(); const td = tr.insertCell(); td.colSpan = 10; td.className = "muted";
       td.textContent = "No merchants in this range.";
     }
     for (const n of rows) {
@@ -293,6 +343,8 @@
       tr.insertCell().textContent = date(n.first_seen);
       tr.insertCell().textContent = [n.new && "New", n.foreign && "Foreign"].filter(Boolean).join(", ") || "—";
       num(n.max_score != null ? n.max_score.toFixed(2) : "—");
+      num(beyond(n) ? String(beyond(n)) : "—");
+      const why = tr.insertCell(); why.className = "why-cell"; why.textContent = (n.reasons || []).join(" · ") || "—";
     }
   }
 
@@ -301,6 +353,12 @@
     const r = await fetch("/api/network?days=" + encodeURIComponent(days));
     data = await r.json();
     currency = data.home_currency;
+    if (limit === null) { // first load: start at the "Unusual pattern" alarm threshold
+      limit = data.anomaly.limit;
+      limitInput.value = String(limit); limitOut.textContent = limit.toFixed(2);
+    }
+    document.getElementById("model-name").textContent = data.anomaly.isolation_forest
+      ? `Isolation Forest (${data.anomaly.model.split("@")[1] || "trained"})` : "statistical baseline (Isolation Forest not trained yet)";
     selected = null;
     svg.style.opacity = "1";
     lastWidth = svg.clientWidth;
@@ -320,5 +378,9 @@
     }, 200);
   });
   onlyAnomalies.addEventListener("change", () => render.highlight && render.highlight(selected));
+  limitInput.addEventListener("input", () => {
+    limit = parseFloat(limitInput.value); limitOut.textContent = limit.toFixed(2);
+    if (render.applyLimit) render.applyLimit();
+  });
   load(document.querySelector('.seg button[aria-pressed="true"]').dataset.days);
 })();

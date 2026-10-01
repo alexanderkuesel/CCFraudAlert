@@ -61,7 +61,12 @@ def is_atypical(group: str, f: dict, typical: dict) -> bool:
     return True
 
 
-def describe(group: str, f: dict) -> str:
+def _clock(hour: float) -> str:
+    h = int(round(hour)) % 24
+    return f"{h % 12 or 12} {'am' if h < 12 else 'pm'}"
+
+
+def describe(group: str, f: dict, typical: dict | None = None) -> str:
     if group == "amount_merchant":
         return "much more than you usually spend here" if f.get("amount_z_merchant", 0) > 0 \
             else "much less than you usually spend here"
@@ -74,8 +79,8 @@ def describe(group: str, f: dict) -> str:
         seen = round(math.expm1(f.get("merchant_seen_log", 0.0)))
         return "first purchase at this merchant" if seen == 0 else f"only {seen} earlier purchase{'s' * (seen != 1)} here"
     if group == "time":
-        h = int(_hour(f))
-        return f"at {h % 12 or 12} {'am' if h < 12 else 'pm'}"
+        usual = f" (you usually shop around {_clock(_hour(typical))})" if typical else ""
+        return f"at {_clock(_hour(f))}{usual}"
     if group == "weekday":
         angle = math.atan2(f.get("dow_sin", 0.0), f.get("dow_cos", 1.0)) % (2 * math.pi)
         return f"on a {WEEKDAYS[round(angle / (2 * math.pi) * 7) % 7]}"
@@ -119,7 +124,7 @@ def explain(
         return []
     ranked = sorted(zip(keys, drops), key=lambda kv: -kv[1])
     reasons = [
-        {"key": k, "text": describe(k, features), "weight": round(d / total, 2)}
+        {"key": k, "text": describe(k, features, typical), "weight": round(d / total, 2)}
         for k, d in ranked if d / total >= min_share and is_atypical(k, features, typical)
     ]
     return reasons[:top]
