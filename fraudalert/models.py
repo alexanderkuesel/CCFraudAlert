@@ -64,6 +64,8 @@ class Transaction(Base):
     features: Mapped[dict | None] = mapped_column(JSON)
     anomaly_score: Mapped[float | None] = mapped_column(Float)
     anomaly_model: Mapped[str | None] = mapped_column(String(64))
+    # Up to three plain-language reasons for a notable score: [{"key", "text", "weight"}].
+    anomaly_reasons: Mapped[list | None] = mapped_column(JSON)
 
     flagged: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     # User feedback: None = unreviewed, True = confirmed fraud, False = legit. Future training labels.

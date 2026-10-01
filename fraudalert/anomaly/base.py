@@ -26,6 +26,10 @@ class AnomalyDetector(ABC):
     @abstractmethod
     def score(self, features: dict[str, float]) -> float | None: ...
 
+    def explain(self, features: dict[str, float]) -> list[dict]:
+        """Plain-language reasons for the score (see anomaly/explain.py). Optional."""
+        return []
+
 
 DETECTORS: dict[str, type[AnomalyDetector]] = {}
 

@@ -37,3 +37,10 @@ class BaselineDetector(AnomalyDetector):
         )
         # Squash to [0, 1): raw 1 -> 0.39, 2 -> 0.63, 3 -> 0.78, 5 -> 0.92
         return round(1 - math.exp(-raw / 2), 4)
+
+    def explain(self, features: dict[str, float]) -> list[dict]:
+        from fraudalert.anomaly.explain import NEUTRAL, explain
+
+        if self.score(features) is None:
+            return []
+        return explain(lambda rows: [self.score(r) or 0.0 for r in rows], features, NEUTRAL)
