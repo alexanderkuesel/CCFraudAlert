@@ -9,6 +9,10 @@
       {% endfor %}
     </div>
     <label class="switch"><input type="checkbox" id="only-anomalies"> Highlight anomalies</label>
+    <label class="limit-control" title="Merchants with a transaction at or above this anomaly score get the dotted ring. Starts at your 'Unusual pattern' alarm threshold.">
+      Anomaly limit <input type="range" id="limit" min="0.80" max="0.99" step="0.01" value="0.97" aria-describedby="limit-summary">
+      <output id="limit-out" for="limit">0.97</output></label>
+    <span class="muted" id="limit-summary" aria-live="polite"></span>
     <span class="muted" id="net-summary" aria-live="polite"></span>
   </div>
 
@@ -21,6 +25,8 @@
     <li><span class="key-node st-normal" aria-hidden="true"></span>Normal</li>
     <li><span class="key-ring ring-new" aria-hidden="true"></span>New merchant (first purchase in the last {{ new_days }} days)</li>
     <li><span class="key-ring ring-foreign" aria-hidden="true"></span>Foreign</li>
+    <li><span class="key-halo" aria-hidden="true"></span>Anomaly halo <span class="muted">(stronger = more of its transactions look unusual)</span></li>
+    <li><span class="key-ring ring-limit" aria-hidden="true"></span>Beyond the anomaly limit</li>
     <li><span class="key-card" aria-hidden="true"></span>Card · <span class="muted">circle size = total spend</span></li>
   </ul>
 
@@ -37,12 +43,16 @@
     </aside>
   </div>
 
+  <p class="muted model-note">Anomaly scores: <span id="model-name">…</span>. A score is a percentile of your own history:
+    0.97 = more unusual than 97% of it. The map's positions show who-buys-where, not the model's feature space,
+    so the limit is shown as rings and halos rather than a line.</p>
   <h3>Merchants</h3>
   <div class="table-wrap">
     <table id="net-table">
       <thead><tr><th>Status</th><th>Merchant</th><th style="text-align:right">Transactions</th>
         <th style="text-align:right">Total</th><th style="text-align:right">Cards</th><th>First purchase</th>
-        <th>Signals</th><th style="text-align:right">Max anomaly</th></tr></thead>
+        <th>Signals</th><th style="text-align:right">Max anomaly</th><th style="text-align:right">Beyond limit</th>
+        <th>Why unusual</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>

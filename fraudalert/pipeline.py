@@ -26,6 +26,7 @@ from fraudalert.rules.engine import RuleSpec, describe, evaluate
 log = logging.getLogger(__name__)
 
 HISTORY_LIMIT = 1000
+EXPLAIN_MIN = 0.8  # store "why unusual" reasons for scores at or above this
 NOTIFY_MAX_AGE = timedelta(days=2)  # don't page on old mail during a historical backfill
 _sync_lock = threading.Lock()
 
@@ -161,6 +162,8 @@ def score_transaction(session: Session, txn: Transaction, detector: AnomalyDetec
     txn.features = features
     txn.anomaly_score = detector.score(features)
     txn.anomaly_model = detector.name
+    notable = txn.anomaly_score is not None and txn.anomaly_score >= EXPLAIN_MIN
+    txn.anomaly_reasons = (detector.explain(features) or None) if notable else None
 
 
 def apply_rules(session: Session, txn: Transaction, rules: list[RuleSpec], env: Env) -> list[Alert]:

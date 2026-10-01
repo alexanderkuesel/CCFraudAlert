@@ -437,6 +437,7 @@ def create_app(init: bool = True) -> FastAPI:
             "id": t.id, "occurred_at": t.occurred_at.isoformat(), "amount": str(t.amount),
             "currency": t.currency, "merchant": t.merchant, "card_last4": t.card_last4,
             "auth_code": t.auth_code, "reference": t.reference,
+            "anomaly_reasons": [r["text"] for r in (t.anomaly_reasons or [])],
             "is_foreign": t.is_foreign, "anomaly_score": t.anomaly_score, "flagged": t.flagged,
             "label_fraud": t.label_fraud, "comment": t.comment, "alerts": [a.reason for a in t.alerts],
         }

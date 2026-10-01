@@ -36,9 +36,10 @@ def _vector(features: dict) -> list[float]:
 class TrainedForest:
     """The fitted forest plus the sorted training scores used to turn a raw score into a percentile."""
 
-    def __init__(self, forest, reference: list[float]):
+    def __init__(self, forest, reference: list[float], medians: dict[str, float] | None = None):
         self.forest = forest
         self.reference = reference  # sorted raw anomaly scores of the training data (higher = odder)
+        self.medians = medians  # typical value of each feature, used to explain scores
 
     def raw(self, rows: list[dict]) -> list[float]:
         return [-s for s in self.forest.score_samples([_vector(r) for r in rows])]
@@ -53,8 +54,11 @@ class TrainedForest:
 def fit_forest(rows: list[dict]) -> TrainedForest:
     from sklearn.ensemble import IsolationForest
 
+    import statistics
+
     forest = IsolationForest(**PARAMS).fit([_vector(r) for r in rows])
-    model = TrainedForest(forest, [])
+    medians = {n: statistics.median(float(r.get(n, 0.0)) for r in rows) for n in MODEL_FEATURES}
+    model = TrainedForest(forest, [], medians)
     model.reference = sorted(model.raw(rows))
     return model
 
@@ -107,3 +111,12 @@ class IsolationForestDetector(AnomalyDetector):
         if self.model is None:
             return self._baseline.score(features)
         return self.model.score_many([features])[0]
+
+    def explain(self, features: dict[str, float]) -> list[dict]:
+        from fraudalert.anomaly.explain import NEUTRAL, explain
+
+        if self.model is None:
+            return self._baseline.explain(features)
+        # Raw forest scores (not percentiles) so the drop is visible even when the percentile is maxed out.
+        typical = getattr(self.model, "medians", None) or NEUTRAL  # models trained before medians existed
+        return explain(self.model.raw, features, typical)

@@ -175,3 +175,13 @@ def test_period_table_shows_state_not_a_made_up_priority(env, tmp_path):
     soda = next(line for line in period.splitlines() if "SODA TICA" in line)
     assert soda.endswith("[P1 High]")  # escalated: same card within 48h of the card test
     assert "Reference" not in r.html.split("Transactions since the last report")[1]  # no refs -> no column
+
+
+def test_report_includes_why_unusual(env, tmp_path):
+    scenario(env, tmp_path)
+    with env.session_scope() as s:
+        t = s.query(Transaction).filter_by(merchant="AMAZON.COM LLC").one()
+        t.anomaly_reasons = [{"key": "amount", "text": "zero or near-zero amount (a typical card test)", "weight": 0.7}]
+        r = report.build_report(s, get_settings(), NOW - timedelta(days=1), NOW, report.get_prefs(s, get_settings()))
+    assert "why unusual: zero or near-zero amount (a typical card test)" in r.text
+    assert "<b>Why unusual:</b> zero or near-zero amount (a typical card test)" in r.html

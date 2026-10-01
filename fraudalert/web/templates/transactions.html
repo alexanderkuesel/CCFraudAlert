@@ -128,7 +128,9 @@
       <td class="num mono">{{ '{:,.2f}'.format(t.amount) }} {{ t.currency }}</td>
       <td class="num mono">{{ '%.2f' % t.anomaly_score if t.anomaly_score is not none else '—' }}</td>
       <td>{% for a in alarms_by_priority(t) %}
-            <div class="alarm-text" title="{{ a.reason }}"><span class="pri pri-sm pri-{{ PRIORITY_RANK.get(a.severity, 3) }}" aria-hidden="true">{{ PRIORITY_RANK.get(a.severity, 3) }}</span>{{ a.rule.name if a.rule else a.reason }}</div>{% endfor %}</td>
+            <div class="alarm-text" title="{{ a.reason }}"><span class="pri pri-sm pri-{{ PRIORITY_RANK.get(a.severity, 3) }}" aria-hidden="true">{{ PRIORITY_RANK.get(a.severity, 3) }}</span>{{ a.rule.name if a.rule else a.reason }}</div>{% endfor %}
+          {% if t.anomaly_reasons %}<div class="why-line" title="Why the anomaly model finds this unusual"><b>Why unusual:</b>
+            {{ t.anomaly_reasons|map(attribute='text')|join(' · ') }}</div>{% endif %}</td>
       <td class="nowrap">
         {% if t.label_fraud is none %}
           {% if t.flagged %}

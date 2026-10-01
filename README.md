@@ -167,6 +167,17 @@ total spend) as a graph, so unusual patterns stand out at a glance:
   items stay grey). Colour is never the only signal: every state also has a glyph, a label, and a row in
   the table below the map.
 * **Dashed ring** = new merchant (first purchase in the last 14 days). **Blue ring** = foreign.
+* **Anomaly model on the map:**
+  * A **violet halo** shows how unusual a merchant is overall: the share of its transactions that
+    score in the top ~15% of your history (≥ 0.85). Everyday merchants stay grey; a merchant that's
+    mostly odd transactions glows.
+  * A **dotted violet ring** marks merchants with at least one transaction **beyond the anomaly
+    limit**. Set the limit with the **Anomaly limit** slider. It starts at your *Unusual pattern*
+    alarm threshold (0.97), and the line next to it counts the merchants and transactions beyond it.
+  * Tooltips and the merchant table add the score, how many transactions are beyond the limit,
+    and **why** the model finds it unusual.
+  * The map's positions show who-buys-where, not the model's feature space, so the limit is drawn
+    as rings and halos rather than as a line.
 * **Hover** a node to see only its connections (which cards used this merchant, or where this card
   was used). **Click** it to pin the details, with a link to its transactions.
 * **Highlight anomalies** fades everything normal, leaving flagged, new and foreign merchants.
@@ -229,6 +240,13 @@ don't fit. The score is a percentile, so **0.97** means more unusual than 97% of
 * **Sanity check:** **Settings** shows how well it separates what you acknowledged as fraud from
   legit (AUC), next to the baseline, and how many alarms it would raise per 30 days. Legit rows
   are also training data, so this is a sanity check rather than a benchmark.
+
+**Why is it unusual?** For every score of 0.8 or more, the model states up to three reasons in plain
+words, e.g. *"5 other transactions in the past 24 hours · minutes after your previous transaction"*
+or *"first purchase at this merchant · at 3 am (you usually shop around 7 pm)"*. It does this by
+putting each feature group back to your typical value (the training median) and measuring how much
+less unusual the transaction becomes. A group is only named when its value really is atypical. The
+reasons appear on the alarm summary, the network map, the API (`anomaly_reasons`) and the daily report.
 
 **Baseline (`FRAUDALERT_DETECTOR=baseline`).** A transparent heuristic: an unusual amount for the
 merchant, a large amount at a new merchant, foreign, a new merchant, bursts, and 0–5am.

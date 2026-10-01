@@ -101,6 +101,8 @@ td.empty { padding: 1.4rem; text-align: center; color: var(--muted); }
 .alarm-table td:first-child { width: 36px; }
 .state-tag { font-size: 11px; font-weight: 800; letter-spacing: .06em; padding: .05rem .35rem; border: 1.5px solid var(--fg); border-radius: 2px; }
 .alarm-text { font-size: 13px; min-width: 190px; }
+.why-line { font-size: 12px; font-weight: 400; color: var(--muted); margin-top: .2rem; max-width: 320px; }
+.why-line b { color: var(--fg); font-weight: 600; }
 .bank-ref { font-size: 11px; color: var(--muted); font-weight: 400; margin-top: .1rem; }
 .tag { font-size: 11px; padding: 0 .35rem; border: 1px solid var(--border); border-radius: 2px; color: var(--muted); white-space: nowrap; }
 
@@ -163,9 +165,9 @@ pre { white-space: pre-wrap; font-size: 12px; max-height: 240px; overflow: auto;
 .alert-reason { font-size: 12px; color: var(--p1); }
 
 /* ---------- Network page (same ISA-101 rules: grey by default, colour = alarm) ---------- */
-.net { --st-normal: #a9acb0; --st-legit: #8d9095; --foreign: #3d6a99; --edge: #b0b3b7; --card-node: #2b2e33; --halo: var(--panel-2); }
+.net { --anomaly: #8d4bd6; --st-normal: #a9acb0; --st-legit: #8d9095; --foreign: #3d6a99; --edge: #b0b3b7; --card-node: #2b2e33; --halo: var(--panel-2); }
 @media (prefers-color-scheme: dark) {
-  .net { --st-normal: #55595f; --st-legit: #6a6e74; --foreign: #7fa6cf; --edge: #43474d; --card-node: #d8d9db; }
+  .net { --anomaly: #b86fe0; --st-normal: #55595f; --st-legit: #6a6e74; --foreign: #7fa6cf; --edge: #43474d; --card-node: #d8d9db; }
 }
 .seg { display: inline-flex; border: 1px solid var(--btn-border); border-radius: 4px; overflow: hidden; }
 .seg button { border: 0; border-radius: 0; padding: .35rem .75rem; background: var(--panel); }
@@ -181,6 +183,16 @@ pre { white-space: pre-wrap; font-size: 12px; max-height: 240px; overflow: auto;
 .st-p2 { background: var(--p2); color: var(--p2-fg); } .st-p3 { background: var(--p3); }
 .st-legit { background: var(--st-legit); } .st-normal { background: var(--st-normal); }
 .ring-new { border: 2px dashed var(--fg); } .ring-foreign { border: 2.5px solid var(--foreign); }
+.ring-limit { border: 3px dotted var(--anomaly); }
+.key-halo { width: 18px; height: 18px; border-radius: 50%; display: inline-block;
+  background: radial-gradient(circle, var(--st-normal) 0 35%, color-mix(in srgb, var(--anomaly) 45%, transparent) 36% 100%); }
+.limit-control { display: inline-flex; align-items: center; gap: .4rem; margin: 0; color: inherit; font-size: inherit; }
+.limit-control input { width: 130px; accent-color: var(--anomaly); padding: 0; }
+.limit-control output { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 2.4em; }
+.tt-why-h { margin-top: .3rem; font-weight: 700; } .tt-why { color: var(--fg); }
+.why-h { margin: .4rem 0 .2rem; font-weight: 700; } ul.why { margin: 0 0 .75rem; padding-left: 1.1rem; }
+.why-cell { font-size: 12px; color: var(--muted); min-width: 200px; }
+.model-note { font-size: 12px; margin: .6rem 0 0; }
 .net-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 1rem; align-items: start; }
 @media (max-width: 860px) { .net-body { grid-template-columns: 1fr; } }
 .net-canvas { position: relative; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; }
@@ -208,6 +220,11 @@ pre { white-space: pre-wrap; font-size: 12px; max-height: 240px; overflow: auto;
 .node .glyph { fill: #fff; font-weight: 800; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
 .node.p2 .glyph { fill: var(--p2-fg); }
 .node .ring-foreign { fill: none; stroke: var(--foreign); stroke-width: 2.5; }
+/* Anomaly model: violet, its own hue (not an alarm colour). The limit ring is dotted so it never relies
+   on colour alone (foreign = solid ring, new = dashed). */
+.node .halo { fill: var(--anomaly); stroke: none; pointer-events: none; }
+.node .ring-limit { fill: none; stroke: var(--anomaly); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 0.1 5; opacity: 0; }
+.node.beyond .ring-limit { opacity: 1; }
 .node .ring-new { fill: none; stroke: var(--fg); stroke-width: 1.5; stroke-dasharray: 3 3; }
 .node .hit { fill: transparent; }
 .node:hover .body, .node:focus-visible .body, .node.selected .body { stroke: var(--fg); stroke-width: 2.5; }

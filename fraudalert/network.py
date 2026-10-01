@@ -33,6 +33,8 @@ class _Merchant:
     last_seen: datetime | None = None
     foreign: bool = False
     max_score: float | None = None
+    scores: list[float] = field(default_factory=list)
+    reasons: list | None = None  # "why unusual" of the highest-scoring transaction
     states: set[str] = field(default_factory=set)
     cards: set[str] = field(default_factory=set)
 
@@ -83,7 +85,10 @@ def build_network(session: Session, env, days: int | None, now: datetime | None 
         m.last_seen = max(m.last_seen or ts, ts)
         m.foreign |= env.is_foreign(t)
         if t.anomaly_score is not None:
-            m.max_score = max(m.max_score or 0.0, t.anomaly_score)
+            m.scores.append(round(t.anomaly_score, 3))
+            if m.max_score is None or t.anomaly_score >= m.max_score:
+                m.max_score = t.anomaly_score
+                m.reasons = t.anomaly_reasons or m.reasons
         m.states.add(_state(t))
         m.cards.add(card)
         e = edges.setdefault((card, key), {"count": 0, "total": 0.0, "flagged": 0})
@@ -110,13 +115,16 @@ def build_network(session: Session, env, days: int | None, now: datetime | None 
             "state": min(m.states, key=STATE_ORDER.index),
             "new": first_ever.get(key, m.first_seen) >= new_cutoff,
             "foreign": m.foreign,
-            "max_score": None if m.max_score is None else round(m.max_score, 2),
+            "max_score": None if m.max_score is None else round(m.max_score, 3),
+            "scores": sorted(m.scores, reverse=True),
+            "reasons": [r["text"] for r in (m.reasons or [])],
             "first_seen": first_ever.get(key, m.first_seen).isoformat(),
             "last_seen": m.last_seen.isoformat(),
             "cards": len(m.cards),
         })
     return {
         "home_currency": env.home_currency,
+        "anomaly": anomaly_info(session),
         "days": days,
         "new_merchant_days": NEW_MERCHANT_DAYS,
         "nodes": nodes,
@@ -126,3 +134,22 @@ def build_network(session: Session, env, days: int | None, now: datetime | None 
             for (c, k), v in edges.items()
         ],
     }
+
+
+DEFAULT_LIMIT = 0.97
+
+
+def anomaly_info(session: Session) -> dict:
+    """Which model is scoring, and the default limit for the map's slider: the threshold of the enabled
+    rule that alarms on anomaly_score (the built-in "Unusual pattern" rule), else 0.97."""
+    from fraudalert.models import Rule
+
+    limit = None
+    for rule in session.scalars(select(Rule).where(Rule.enabled.is_(True)).order_by(Rule.id)):
+        for c in rule.conditions or []:
+            if c.get("field") == "anomaly_score" and c.get("op") in ("gte", "gt"):
+                limit = float(c["value"]) if limit is None else min(limit, float(c["value"]))
+    model = session.scalar(select(Transaction.anomaly_model).where(Transaction.anomaly_model.is_not(None))
+                           .order_by(Transaction.id.desc()).limit(1))
+    return {"limit": limit if limit is not None else DEFAULT_LIMIT, "model": model or "baseline-v1",
+            "isolation_forest": bool(model and model.startswith("iforest"))}

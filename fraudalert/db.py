@@ -65,6 +65,9 @@ def init_db() -> None:
         # them in. This updates transactions in place, so labels and comments are kept.
         log.info("new columns %s: re-parsing stored emails to fill them", sorted(REPARSE_WHEN_ADDED & added_columns))
         reevaluate_all(reparse="all")
+    elif RESCORE_WHEN_ADDED & added_columns:
+        log.info("new columns %s: re-scoring stored transactions", sorted(RESCORE_WHEN_ADDED & added_columns))
+        reevaluate_all()
     elif added:
         # New built-in rules (after an upgrade): apply them to the transactions already stored.
         log.info("added %d built-in rule(s); re-evaluating stored transactions", added)
@@ -80,6 +83,8 @@ def _has_transactions() -> bool:
 
 # Columns filled by the email parser: when an upgrade adds one, stored emails are re-parsed once.
 REPARSE_WHEN_ADDED = {"transactions.auth_code", "transactions.reference"}
+# Columns filled by scoring: when an upgrade adds one, stored transactions are re-scored once.
+RESCORE_WHEN_ADDED = {"transactions.anomaly_reasons"}
 
 
 def _add_missing_columns(conn) -> set[str]:
