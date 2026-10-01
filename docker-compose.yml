@@ -16,6 +16,7 @@ services:
       test: ["CMD-SHELL", "pg_isready -U fraudalert"]
       interval: 5s
       retries: 10
+    restart: unless-stopped  # come back after a reboot, like web and worker
 
   web:
     build: .

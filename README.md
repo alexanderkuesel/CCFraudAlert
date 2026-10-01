@@ -61,6 +61,20 @@ cp .env.example .env        # fill in IMAP credentials + sender filter
 docker compose up -d        # postgres + web UI (http://localhost:8000) + worker (syncs every 5 min)
 ```
 
+### Starting automatically after a reboot
+
+All three containers use `restart: unless-stopped`, so they come back whenever the Docker engine
+starts, unless you stopped them yourself with `docker compose stop` or `down`. Start them once with
+`docker compose up -d`, then make sure Docker itself starts at boot:
+
+* **Linux:** `sudo systemctl enable --now docker`
+* **Windows / macOS (Docker Desktop):** Settings → General → **Start Docker Desktop when you sign in**.
+  Docker Desktop only runs after you sign in, so for an unattended machine, set the PC to sign in
+  automatically or use a Linux host.
+
+After a reboot, `web` and `worker` may restart a few times while Postgres is still starting. That's
+expected; they settle once the database is up. Check with `docker compose ps`.
+
 The compose database is published on host port **5433**, so it doesn't clash with a Postgres you may
 already run on 5432. Change `FRAUDALERT_DB_HOST_PORT` / `FRAUDALERT_WEB_HOST_PORT` in `.env` if those
 ports are taken too.
