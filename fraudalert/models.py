@@ -133,3 +133,30 @@ class AnomalyModel(Base):
     feature_version: Mapped[int] = mapped_column(Integer)
     blob: Mapped[bytes] = mapped_column(LargeBinary)  # pickled model + reference score distribution
     metrics: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class Category(Base):
+    """A spending category: the "device" in the SCADA-style spend historian. Merchants are its tags."""
+
+    __tablename__ = "categories"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    budget_monthly: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))  # home currency; the setpoint
+    sort: Mapped[int] = mapped_column(Integer, default=100)
+
+    tags: Mapped[list["MerchantTag"]] = relationship(back_populates="category")
+
+
+class MerchantTag(Base):
+    """A merchant as a historian tag, keyed by the normalised merchant name. `assigned_by` records
+    whether the category came from the user ("user") or the keyword guesser ("auto"); user wins."""
+
+    __tablename__ = "merchant_tags"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    merchant_key: Mapped[str] = mapped_column(String(512), unique=True, index=True)
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id", ondelete="SET NULL"), index=True)
+    assigned_by: Mapped[str] = mapped_column(String(8), default="auto")
+
+    category: Mapped[Category | None] = relationship(back_populates="tags")
