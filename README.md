@@ -97,6 +97,31 @@ fraudalert serve
 * Your bank also has to send the alerts: in its app, set the "transaction alert" threshold to $0.01
   so every purchase produces an email.
 
+### Backfilling older emails (years of history)
+
+`FRAUDALERT_LOOKBACK_DAYS` only applies to the very first sync. To pull in older alerts later, for
+example for spending trends or a better-trained anomaly model, run a backfill:
+
+```bash
+docker compose exec worker fraudalert backfill --since 3y --folder "[Gmail]/All Mail"
+# or locally:  fraudalert backfill --since 2022-01-01
+```
+
+* `--since` takes a date (`2022-01-01`) or a number of years (`3y`). Gmail keeps mail until you delete it;
+  your bank's sending history is the real limit.
+* `--folder` searches another IMAP folder for this run only. In Gmail, archived alerts are only in
+  *All Mail*. The folder's name follows your Gmail language (e.g. `[Gmail]/Todos` in Spanish).
+* Emails you already have are skipped, so it's safe to re-run, or to run with a later date first and
+  then go further back. The regular sync's position is left alone.
+* Nothing old is notified. Afterwards every transaction is re-scored against the longer history,
+  and the anomaly model is retrained if you use it.
+* Old alarms don't flood the alarm summary: alarms on backfilled transactions older than 30 days are
+  acknowledged as **legit**, with the comment *Historical (backfill): acknowledged automatically* (you
+  would have disputed a fraudulent charge back then). Change the age with `--ack-older-than DAYS`, or
+  pass `--keep-alarms` to review them yourself.
+* If your bank changed its email layout over the years, older emails may not parse. They're kept on the
+  **Emails** page; `fraudalert reevaluate --reparse` retries them after a parser update.
+
 ## Alarm rules
 
 Rules are stored in the database, so you can add, disable or delete them from the **Alarm rules** page or the
