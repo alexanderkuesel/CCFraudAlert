@@ -1,9 +1,10 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -160,3 +161,24 @@ class MerchantTag(Base):
     assigned_by: Mapped[str] = mapped_column(String(8), default="auto")
 
     category: Mapped[Category | None] = relationship(back_populates="tags")
+
+
+class ManualExpense(Base):
+    """A recurring monthly expense that doesn't arrive as a card alert (rent, a bank transfer, cash).
+    It's a tag in the spend historian, booked on `day_of_month` (clamped to short months) every month
+    from `start_month` through `end_month` (open-ended if empty)."""
+
+    __tablename__ = "manual_expenses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128))
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str] = mapped_column(String(3))
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id", ondelete="SET NULL"), index=True)
+    day_of_month: Mapped[int] = mapped_column(Integer, default=1)
+    start_month: Mapped[date] = mapped_column(Date)  # first of the month
+    end_month: Mapped[date | None] = mapped_column(Date)  # first of the last month it applies to
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    category: Mapped[Category | None] = relationship()

@@ -211,3 +211,81 @@ def test_spending_api(db):
     assert client.delete(f"/api/spending/categories/{hid}").status_code == 404
     assert client.post("/api/spending/categories", json={"name": "Evil"},
                        headers={"origin": "https://evil.example"}).status_code == 403
+
+
+def test_fixed_expenses_book_monthly_and_count_toward_budgets(db):
+    from fraudalert.models import ManualExpense
+
+    with db.session_scope() as s:
+        spending.seed_categories(s)
+        housing = s.scalar(select(Category).where(Category.name == "Housing"))
+        housing.budget_monthly = 1000
+        e = spending.create_expense(s, env(s), {"name": " Rent ", "amount": "900", "category_id": housing.id,
+                                                "day_of_month": 31, "start_month": "2026-04"})
+        assert (e.name, e.currency, e.start_month.isoformat(), e.end_month) == ("Rent", "USD", "2026-04-01", None)
+        spending.create_expense(s, env(s), {"name": "Nanny", "amount": "100000", "currency": "crc",
+                                            "day_of_month": 20, "start_month": "2026-01", "end_month": "2026-05"})
+        for bad, msg in [({"name": "", "amount": 1}, "name"), ({"name": "x", "amount": "0"}, "more than zero"),
+                         ({"name": "x", "amount": "1", "currency": "XYZ"}, "currency"),
+                         ({"name": "x", "amount": "1", "day_of_month": 32}, "1-31"),
+                         ({"name": "x", "amount": "1", "start_month": "2026-05", "end_month": "2026-04"}, "before"),
+                         ({"name": "x", "amount": "1", "start_month": "May"}, "month like")]:
+            with pytest.raises(ValueError, match=msg):
+                spending.create_expense(s, env(s), bad)
+        with pytest.raises(LookupError):
+            spending.create_expense(s, env(s), {"name": "x", "amount": 1, "category_id": 9999})
+        add(s, "ALQUILER BODEGA", 50, NOW - timedelta(days=1))  # card spend, auto-tagged to Housing
+
+    with db.session_scope() as s:
+        rent = s.scalar(select(ManualExpense).where(ManualExpense.name == "Rent"))
+        # April has 30 days, so "day 31" is booked on Apr 30; June 30 is still in the future on Jun 15
+        month = spending.series(s, env(s), merchant=f"manual:{rent.id}", bucket="month", days=120, now=NOW)
+        assert [(p["start"], p["value"]) for p in month["points"]] == [
+            ("2026-03-01", 0), ("2026-04-01", 900), ("2026-05-01", 900), ("2026-06-01", 0)]
+        assert month["label"] == "Rent" and month["device"] == "Housing"
+        day = spending.series(s, env(s), merchant=f"manual:{rent.id}", bucket="day", days=60, now=NOW)
+        assert {p["start"] for p in day["points"] if p["value"]} == {"2026-04-30", "2026-05-31"}
+
+        ov = spending.overview(s, env(s), now=NOW)
+        h = device(ov, "Housing")
+        # rent isn't due until the 30th: not spent yet, but projected at face value
+        assert h["mtd"] == 50 and h["fixed"] == 900 and h["projected"] == 50 / 15 * 30 + 900
+        assert {t["name"]: t["assigned_by"] for t in h["tags"]} == {"ALQUILER BODEGA": "auto", "Rent": "manual"}
+        u = device(ov, spending.UNCATEGORIZED)
+        nanny = next(t for t in u["tags"] if t["name"] == "Nanny")
+        assert nanny["mtd"] == 0 and nanny["spark"][1:5] == [200.0] * 4  # Jan-May at the built-in 0.0020 CRC rate, then ended
+        assert ov["total"]["fixed"] == 900  # Nanny ended in May
+
+        cat = spending.series(s, env(s), category=h["id"], bucket="day", days=30, now=NOW)
+        assert cat["mtd"]["fixed"] == 900 and cat["mtd"]["projected"] == h["projected"]
+
+        # moving a fixed expense to another category goes through the same assign call
+        dining = s.scalar(select(Category.id).where(Category.name == "Dining"))
+        assert spending.assign(s, [f"manual:{rent.id}"], dining) == 1
+        assert rent.category_id == dining
+        spending.update_expense(s, env(s), rent.id, {"amount": "950", "end_month": "2026-05"})
+        assert float(rent.amount) == 950 and rent.end_month.isoformat() == "2026-05-01"
+        with pytest.raises(ValueError, match="before"):
+            spending.update_expense(s, env(s), rent.id, {"end_month": "2026-03"})
+        spending.delete_category(s, dining)
+        s.flush()
+        assert rent.category_id is None
+
+
+def test_fixed_expenses_api(db):
+    client = TestClient(create_app(init=False))
+    r = client.post("/api/spending/expenses", json={"name": "Rent", "amount": "1200", "day_of_month": "1"})
+    assert r.status_code == 201
+    eid = r.json()["id"]
+    assert client.post("/api/spending/expenses", json={"name": "x", "amount": "abc"}).status_code == 422
+    assert client.post("/api/spending/expenses", json={"name": "x", "amount": "1", "category_id": "abc"}).status_code == 422
+    [e] = client.get("/api/spending/expenses").json()
+    assert e["key"] == f"manual:{eid}" and e["currency"] == "USD" and e["home_amount"] == 1200 and e["end_month"] is None
+    assert client.patch(f"/api/spending/expenses/{eid}", json={"note": "lease to 2027"}).status_code == 200
+    assert client.get("/api/spending/expenses").json()[0]["note"] == "lease to 2027"
+    ov = client.get("/api/spending/overview").json()
+    assert ov["total"]["mtd"] == 1200 and device(ov, spending.UNCATEGORIZED)["tags"][0]["assigned_by"] == "manual"
+    assert client.patch("/api/spending/expenses/9999", json={"note": "x"}).status_code == 404
+    assert client.delete(f"/api/spending/expenses/{eid}").status_code == 204
+    assert client.delete(f"/api/spending/expenses/{eid}").status_code == 404
+    assert client.get("/api/spending/overview").json()["total"]["mtd"] == 0

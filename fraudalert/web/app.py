@@ -324,6 +324,60 @@ def create_app(init: bool = True) -> FastAPI:
         except LookupError as exc:
             raise HTTPException(404, str(exc)) from exc
 
+    class ExpenseIn(BaseModel):
+        name: str | None = None
+        amount: str | float | None = None
+        currency: str | None = None
+        category_id: int | str | None = None
+        day_of_month: int | str | None = None
+        start_month: str | None = None
+        end_month: str | None = None
+        note: str | None = None
+
+    @app.get("/api/spending/expenses")
+    def api_list_expenses():
+        from fraudalert import spending
+
+        with session_scope() as s:
+            return spending.list_expenses(s, pipeline.Env.load(s, get_settings()))
+
+    @app.post("/api/spending/expenses", status_code=201)
+    def api_create_expense(body: ExpenseIn):
+        from fraudalert import spending
+
+        try:
+            with session_scope() as s:
+                e = spending.create_expense(s, pipeline.Env.load(s, get_settings()), body.model_dump(exclude_unset=True))
+                return {"id": e.id, "key": f"{spending.MANUAL}{e.id}", "name": e.name}
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.patch("/api/spending/expenses/{expense_id}")
+    def api_update_expense(expense_id: int, body: ExpenseIn):
+        from fraudalert import spending
+
+        try:
+            with session_scope() as s:
+                e = spending.update_expense(s, pipeline.Env.load(s, get_settings()), expense_id,
+                                            body.model_dump(exclude_unset=True))
+                return {"id": e.id, "name": e.name}
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.delete("/api/spending/expenses/{expense_id}", status_code=204)
+    def api_delete_expense(expense_id: int):
+        from fraudalert import spending
+
+        try:
+            with session_scope() as s:
+                spending.delete_expense(s, expense_id)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
     class AssignIn(BaseModel):
         keys: list[str]
         category_id: int | None = None

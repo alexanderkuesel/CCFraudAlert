@@ -330,3 +330,11 @@ button.link.danger { color: var(--danger-text); }
 .bulk-move { display: inline-flex; gap: .4rem; align-items: center; margin-left: auto; font-size: 13px; }
 #tag-table select { max-width: 200px; }
 @media (max-width: 600px) { .bulk-move { margin-left: 0; } .hist-head .tabs { width: 100%; } }
+#fx-table th, #fx-table td { padding-left: .4rem; padding-right: .4rem; }
+#fx-table input, #fx-table select { width: 100%; min-width: 80px; }
+#fx-table select { min-width: 120px; }
+#fx-table input[name="name"] { min-width: 120px; } #fx-table input[name="note"] { min-width: 90px; }
+#fx-table input.fx-cur { min-width: 0; width: 4.2em; text-transform: uppercase; }
+#fx-table input.fx-day { min-width: 0; width: 4.2em; }
+#fx-table input[type="month"] { min-width: 128px; }
+#fx-table tfoot td { background: var(--panel); border-top: 2px solid var(--border); }

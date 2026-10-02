@@ -203,12 +203,19 @@ Since every card transaction already lands here, the **Spending** page turns it 
 * **Trend:** pick anything in the browser (everything, a category, or one merchant) to trend it by
   **day, week or month** over 30 days, 90 days or a year. On the month view, HI and HIHI limit lines are
   drawn, and months over a limit are coloured. Below it, **this month's running total** is plotted
-  against the budget, with a straight-line projection to month end (from day 7, so the first few days
-  don't give wild numbers). Every chart has hover tooltips and a table view.
+  against the budget, with a projection to month end (from day 7, so the first few days don't give
+  wild numbers). Every chart has hover tooltips and a table view.
 * **Categories & tags:** add, rename or delete categories and set or clear their budgets. Merchants are
   categorised automatically from their names the first time they're seen (*auto*). Move a merchant
   from its row, from the trend view, or select several and move them together. What you set is
   marked *you* and never overwritten. Deleting a category moves its merchants to *Uncategorized*.
+* **Fixed expenses:** for monthly costs that never reach your card (rent, school fees, transfers,
+  cash), add a row on the *Fixed expenses* tab with its amount, currency, category, day of the month and
+  the months it applies to (*Until* is optional). Each one is booked on that day every month (the last
+  day in shorter months) and shows up as its own tag, marked *fixed*, counting toward its category's
+  budget. Nothing is booked in the future, but the month-end projection adds this month's fixed
+  expenses at face value and paces only your card spending, so rent on the 1st doesn't inflate it. For
+  a price change, set *Until* on the old row and add a new one, so past months keep the old amount.
 * In keeping with ISA-101, everything is grey until a budget limit is reached. Transactions you
   acknowledged as **fraud** don't count as spending, and nor do zero-amount card tests.
 

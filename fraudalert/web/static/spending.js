@@ -24,7 +24,7 @@
   function niceMax(v) {
     if (v <= 0) return 1;
     const p = Math.pow(10, Math.floor(Math.log10(v))), n = v / p;
-    return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
+    return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 4 ? 4 : n <= 6 ? 6 : n <= 8 ? 8 : 10) * p; // a quarter of each is a clean tick
   }
   async function api(url, opts = {}) {
     const r = await fetch(url, { headers: { "content-type": "application/json" }, ...opts });
@@ -75,7 +75,67 @@
     document.querySelector('[data-bind="month-label"]').textContent =
       `${m.toLocaleDateString(undefined, { month: "long", year: "numeric" })} · day ${state.overview.day_of_month} of ${state.overview.days_in_month}`;
     renderKpis(); renderTree(); renderManage();
+    await loadExpenses();
   }
+
+  // ---------- fixed expenses ----------
+  const FX_FIELDS = ["name", "amount", "currency", "category_id", "day_of_month", "start_month", "end_month", "note"];
+  function fxInputs(e) {
+    const mk = (name, attrs = {}) => { const i = h("input"); i.name = name; Object.assign(i, attrs); return i; };
+    const cat = h("select"); cat.name = "category_id"; fillCategorySelect(cat, e.category_id);
+    return {
+      name: mk("name", { value: e.name, maxLength: 128 }), amount: mk("amount", { value: e.amount, inputMode: "decimal" }),
+      currency: mk("currency", { value: e.currency, maxLength: 3, className: "fx-cur" }), category_id: cat,
+      day_of_month: mk("day_of_month", { type: "number", min: 1, max: 31, value: e.day_of_month, className: "fx-day" }),
+      start_month: mk("start_month", { type: "month", value: e.start_month }),
+      end_month: mk("end_month", { type: "month", value: e.end_month || "" }), note: mk("note", { value: e.note || "" }),
+    };
+  }
+  const fxValues = inputs => Object.fromEntries(FX_FIELDS.map(k => [k, inputs[k].value]));
+  async function afterExpenseChange(msg) {
+    flash(msg); await loadOverview(); if (state.series) await loadSeries();
+  }
+  async function loadExpenses() {
+    const list = await api("/api/spending/expenses"), tbody = $("fx-table").tBodies[0];
+    tbody.replaceChildren();
+    for (const e of list) {
+      const r = tbody.insertRow(), inputs = fxInputs(e);
+      for (const k of FX_FIELDS) {
+        inputs[k].setAttribute("aria-label", `${k.replace(/_/g, " ")} for ${e.name}`);
+        r.insertCell().append(inputs[k]);
+      }
+      const home = r.insertCell(); home.className = "num"; home.textContent = money(e.home_amount);
+      const act = r.insertCell(); act.className = "nowrap";
+      const save = h("button", "Save", "btn btn-sm"), del = h("button", "Delete", "link danger");
+      save.addEventListener("click", async () => {
+        try { await api(`/api/spending/expenses/${e.id}`, { method: "PATCH", body: JSON.stringify(fxValues(inputs)) });
+          await afterExpenseChange(`Saved “${inputs.name.value}”.`); } catch (err) { flash(err.message, true); }
+      });
+      del.addEventListener("click", async () => {
+        if (!confirm(`Delete “${e.name}”? It disappears from every month, past ones included. To stop it from now on, set “Until” instead.`)) return;
+        try { await api(`/api/spending/expenses/${e.id}`, { method: "DELETE" });
+          if (state.pen.type === "tag" && state.pen.key === e.key) state.pen = { type: "all" };
+          await afterExpenseChange(`Deleted “${e.name}”.`); } catch (err) { flash(err.message, true); }
+      });
+      act.append(save, del);
+    }
+    if (!list.length) { const c = tbody.insertRow().insertCell(); c.colSpan = 10; c.className = "empty"; c.textContent = "No fixed expenses yet. Add one below."; }
+    const nowMonth = state.overview.month.slice(0, 7);
+    const active = list.filter(e => e.start_month <= nowMonth && (!e.end_month || e.end_month >= nowMonth));
+    $("fx-total").textContent = list.length
+      ? `${active.length} active this month, ${money(active.reduce((a, e) => a + e.home_amount, 0))} ${currency} in total.` : "";
+    const row = document.querySelector(".fx-new");
+    const sel = row.querySelector('[name="category_id"]'); fillCategorySelect(sel, sel.value === "" || !sel.value ? null : sel.value);
+    const cur = row.querySelector('[name="currency"]'); if (!cur.value) cur.value = currency;
+    const start = row.querySelector('[name="start_month"]'); if (!start.value) start.value = nowMonth;
+  }
+  $("fx-add").addEventListener("click", async () => {
+    const row = document.querySelector(".fx-new"), values = {};
+    row.querySelectorAll("[name]").forEach(i => (values[i.name] = i.value));
+    try { await api("/api/spending/expenses", { method: "POST", body: JSON.stringify(values) });
+      row.querySelectorAll('[name="name"],[name="amount"],[name="note"],[name="end_month"]').forEach(i => (i.value = ""));
+      await afterExpenseChange(`Added “${values.name}”.`); } catch (err) { flash(err.message, true); }
+  });
 
   function renderKpis() {
     const o = state.overview, t = o.total, box = $("hist-kpis");
@@ -85,7 +145,7 @@
       if (sub) k.append(h("small", sub)); box.append(k);
     };
     kpi("Spent this month", `${money(t.mtd, 0)} ${currency}`, t.budget ? `of ${money(t.budget, 0)} budgeted` : "no budgets set");
-    if (o.day_of_month >= MIN_PACE_DAYS) kpi("On pace for", `${money(t.mtd / o.day_of_month * o.days_in_month, 0)} ${currency}`, "at this month's rate");
+    if (t.projected != null) kpi("On pace for", `${money(t.projected, 0)} ${currency}`, t.fixed ? `incl. ${money(t.fixed, 0)} fixed` : "at this month's rate");
     else kpi("On pace for", "—", `shown from day ${MIN_PACE_DAYS}`);
     kpi("Last month", `${money(t.last_month, 0)} ${currency}`);
     const over = o.devices.filter(d => d.status === "hihi").length, near = o.devices.filter(d => d.status === "hi").length;
@@ -110,6 +170,7 @@
       }
       name.append(h("span", label));
       if (d.assigned_by === "user") name.append(h("span", "you", "tb-you"));
+      if (d.assigned_by === "manual") name.append(h("span", "fixed", "tb-you"));
       const val = h("span", `${money(d.mtd, 0)}`, "tb-val");
       const right = h("span", null, "tb-right");
       if (level === 0 && pen.type === "device") { right.append(gauge(d)); const b = statusBadge(d.status); if (b) right.append(b); }
@@ -140,7 +201,7 @@
     $("chart-trend").style.opacity = 1; $("chart-mtd").style.opacity = 1;
     const s = state.series;
     $("pen-title").textContent = s.label;
-    $("pen-path").textContent = p.type === "tag" ? `Tag · device: ${s.device}` : p.type === "device" ? "Device (category)" : "All devices";
+    $("pen-path").textContent = p.type === "tag" ? `${p.key.startsWith("manual:") ? "Fixed expense" : "Tag"} · device: ${s.device}` : p.type === "device" ? "Device (category)" : "All devices";
     const move = $("pen-move"); move.hidden = p.type !== "tag";
     if (p.type === "tag") fillCategorySelect($("move-select"), currentCategoryOf(p.key));
     drawTrend(); drawMtd(); drawTable();
@@ -164,7 +225,9 @@
     if (value == null || value > max) return;
     const y = f.m.t + f.ih - (value / max) * f.ih;
     el("line", { x1: f.m.l, x2: f.W - f.m.r, y1: y, y2: y, class: "limit " + cls }, f.svg);
-    const t = el("text", { x: f.W - f.m.r - 2, y: cls === "hihi" ? y - 4 : y + 13, class: "limit-label", "text-anchor": "end" }, f.svg);
+    const below = cls !== "hihi" && y + 13 < f.m.t + f.ih; // HI sits under its line unless that hits the axis
+    const t = el("text", { x: below || cls === "hihi" ? f.W - f.m.r - 2 : f.m.l + 4, y: below ? y + 13 : y - 4, class: "limit-label",
+      "text-anchor": below || cls === "hihi" ? "end" : "start" }, f.svg);
     t.textContent = label;
   }
   const tip = $("tip");
@@ -209,7 +272,7 @@
   function drawMtd() {
     const s = state.series, m = s.mtd, f = frame($("chart-mtd"), 200);
     const n = m.days_in_month, cum = m.cumulative, today = cum.length, last = cum[today - 1] || 0;
-    const paced = today >= MIN_PACE_DAYS, projected = paced ? last / today * n : last;
+    const paced = m.projected != null, projected = paced ? m.projected : last;
     const max = niceMax(Math.max(last, projected, m.budget ? m.budget * 1.05 : 0, 1));
     yAxis(f, max);
     const X = d => f.m.l + (d - 1) / Math.max(n - 1, 1) * f.iw, Y = v => f.m.t + f.ih - (v / max) * f.ih;
@@ -234,7 +297,7 @@
       const day = Math.min(Math.max(d, 1), n); cross.setAttribute("x1", X(day)); cross.setAttribute("x2", X(day)); cross.setAttribute("visibility", "visible");
       const date = dayLabel(m.month.slice(0, 8) + String(day).padStart(2, "0"));
       showTip(ev, day <= today ? [`${money(cum[day - 1])} ${currency}`, `Running total to ${date}`, m.budget ? `${Math.round(cum[day - 1] / m.budget * 100)}% of budget` : ""].filter(Boolean)
-        : paced ? [`${money(projected / n * day, 0)} ${currency}`, `Projected by ${date}`] : [date, `Projection starts on day ${MIN_PACE_DAYS}`]);
+        : paced ? [`${money(last + (projected - last) * (day - today) / (n - today), 0)} ${currency}`, `Projected by ${date}`] : [date, `Projection starts on day ${MIN_PACE_DAYS}`]);
     });
     hit.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); hideTip(); });
   }
@@ -320,7 +383,8 @@
         const s = h("select"); s.setAttribute("aria-label", "Category for " + t.name); fillCategorySelect(s, d.id);
         s.addEventListener("change", async () => { try { await assign([t.key], s.value); flash(`Moved ${t.name}.`); } catch (e) { flash(e.message, true); } });
         r.insertCell().append(s);
-        r.insertCell().append(h("span", t.assigned_by === "user" ? "you" : "auto", t.assigned_by === "user" ? "tb-you" : "muted"));
+        r.insertCell().append(h("span", t.assigned_by === "user" ? "you" : t.assigned_by === "manual" ? "fixed" : "auto",
+          t.assigned_by === "auto" ? "muted" : "tb-you"));
         const m = r.insertCell(); m.className = "num"; m.textContent = money(t.mtd, 0);
         const six = r.insertCell(); six.className = "num"; six.textContent = money(t.spark.reduce((a, b) => a + b, 0), 0);
       }
@@ -341,7 +405,7 @@
   document.querySelectorAll("[data-tab]").forEach(a => a.addEventListener("click", ev => {
     ev.preventDefault();
     document.querySelectorAll("[data-tab]").forEach(x => x.setAttribute("aria-selected", String(x === a)));
-    $("tab-trends").hidden = a.dataset.tab !== "trends"; $("tab-manage").hidden = a.dataset.tab !== "manage";
+    for (const t of ["trends", "manage", "fixed"]) $("tab-" + t).hidden = a.dataset.tab !== t;
     history.replaceState(null, "", "#" + a.dataset.tab);
     if (a.dataset.tab === "trends" && state.series) { drawTrend(); drawMtd(); }
   }));

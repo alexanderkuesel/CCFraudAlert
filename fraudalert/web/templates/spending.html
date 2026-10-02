@@ -12,6 +12,7 @@
     <div class="tabs" role="tablist">
       <a role="tab" href="#trends" data-tab="trends" aria-selected="true">Trends</a>
       <a role="tab" href="#manage" data-tab="manage" aria-selected="false">Categories &amp; tags</a>
+      <a role="tab" href="#fixed" data-tab="fixed" aria-selected="false">Fixed expenses</a>
     </div>
   </div>
 
@@ -86,6 +87,32 @@
         <thead><tr><th class="sel"><input type="checkbox" id="tag-all" aria-label="Select all shown merchants"></th>
           <th>Merchant</th><th>Category</th><th>Set by</th><th style="text-align:right">This month</th>
           <th style="text-align:right">6 months</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+  <section id="tab-fixed" hidden>
+    <div class="card">
+      <h3 style="margin-top:0">Fixed expenses</h3>
+      <p class="muted">Monthly costs that never reach your card: rent, school fees, transfers, cash. Each one is booked on
+        its day every month from <i>From</i> through <i>Until</i> (leave empty to keep going), and shows up as a
+        <b>tag</b> in its category, counting toward that category's budget. To record a price change, set
+        <i>Until</i> on the old row and add a new one, so earlier months keep the old amount.</p>
+      <div class="table-wrap"><table id="fx-table">
+        <thead><tr><th>Name</th><th>Amount</th><th>Currency</th><th>Category</th><th>Day</th><th>From</th><th>Until</th>
+          <th>Note</th><th style="text-align:right">Monthly (<span data-bind="currency"></span>)</th><th></th></tr></thead>
+        <tbody></tbody>
+        <tfoot><tr class="fx-new">
+          <td><input name="name" placeholder="e.g. Rent" aria-label="New expense name" maxlength="128"></td>
+          <td><input name="amount" placeholder="0.00" aria-label="Amount" inputmode="decimal"></td>
+          <td><input name="currency" aria-label="Currency" maxlength="3" class="fx-cur"></td>
+          <td><select name="category_id" aria-label="Category"></select></td>
+          <td><input name="day_of_month" type="number" min="1" max="31" value="1" aria-label="Day of month" class="fx-day"></td>
+          <td><input name="start_month" type="month" aria-label="From month"></td>
+          <td><input name="end_month" type="month" aria-label="Until month (optional)"></td>
+          <td><input name="note" placeholder="optional" aria-label="Note"></td>
+          <td></td>
+          <td><button type="button" class="btn btn-sm" id="fx-add">Add</button></td>
+        </tr></tfoot></table></div>
+      <p class="muted" id="fx-total"></p>
     </div>
   </section>
   <div class="flash" id="hist-msg" hidden></div>
