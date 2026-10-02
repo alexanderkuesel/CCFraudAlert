@@ -235,9 +235,16 @@ Since every card transaction already lands here, the **Spending** page turns it 
   sparkline. Expand a category to see its merchants with their month-to-date spend and count.
 * **Trend:** pick anything in the browser (everything, a category, or one merchant) to trend it by
   **day, week or month** over 30 days, 90 days or a year. On the month view, HI and HIHI limit lines are
-  drawn, and months over a limit are coloured. Below it, **this month's running total** is plotted
-  against the budget, with a projection to month end (from day 7, so the first few days don't give
-  wild numbers). Every chart has hover tooltips and a table view.
+  drawn, and months over a limit are coloured. Every chart has hover tooltips and a table view.
+* **Actual vs expected** (setpoint trajectory against process value): the running total for a month
+  is plotted against an **expected** curve, which is how your card spending usually builds up through a
+  month (the average of the previous 3 complete months, stretched to the month's length) plus that
+  month's fixed expenses on their due days. Step back with ‹ › to see how any past month tracked its
+  expectation. For the current month, the **forecast** continues from today's actual along the
+  expected path. Until there's a complete month on record, it falls back to a straight line from day 7.
+* **Expected vs actual, by month:** a bar for what you spent and a tick for what was expected for each
+  of the last 6 months (this month shows the forecast too), labelled with the difference in %. Click a
+  month to open its running total. Your first partial month of email history is never used as "usual".
 * **Categories & tags:** add, rename or delete categories and set or clear their budgets. Merchants are
   categorised automatically from their names the first time they're seen (*auto*). Move a merchant
   from its row, from the trend view, or select several and move them together. What you set is
