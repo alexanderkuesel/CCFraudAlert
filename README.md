@@ -119,6 +119,14 @@ docker compose exec worker fraudalert backfill --since 3y --folder "[Gmail]/All 
   acknowledged as **legit**, with the comment *Historical (backfill): acknowledged automatically* (you
   would have disputed a fraudulent charge back then). Change the age with `--ack-older-than DAYS`, or
   pass `--keep-alarms` to review them yourself.
+* **Backfill came up short?** Run `fraudalert imap-check --since 3y [--folder ...]`. It's read-only and
+  lists the server's folders, the oldest message the server shows in the folder, how many emails match your
+  sender filter and from when, and any other addresses your bank's domain sent from. The usual causes:
+  * **Gmail's IMAP folder size limit** (Settings → See all settings → Forwarding and POP/IMAP → *Folder
+    size limits*): when it's on, IMAP only shows a folder's newest messages. Choose *Do not limit*.
+  * **Archived mail** is only in All Mail, which is named after your Gmail language (`[Gmail]/All Mail`,
+    `[Gmail]/Todos`, ...).
+  * **The bank's sender address changed** over the years: add the old address to `FRAUDALERT_SENDER_FILTER`.
 * If your bank changed its email layout over the years, older emails may not parse. They're kept on the
   **Emails** page; `fraudalert reevaluate --reparse` retries them after a parser update.
 

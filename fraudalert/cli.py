@@ -25,6 +25,9 @@ def main(argv: list[str] | None = None) -> int:
     bf.add_argument("--ack-older-than", type=int, default=30, metavar="DAYS",
                     help="acknowledge alarms on backfilled transactions older than this as legit (default 30)")
     bf.add_argument("--keep-alarms", action="store_true", help="leave alarms on backfilled transactions unacknowledged")
+    ic = sub.add_parser("imap-check", help="show what the mail server exposes (read-only), to debug a short backfill")
+    ic.add_argument("--since", default="3y", help="date or years, as for backfill (default 3y)")
+    ic.add_argument("--folder", help="folder to check instead of FRAUDALERT_IMAP_FOLDER")
     i = sub.add_parser("import-eml", help="ingest saved .eml files")
     i.add_argument("paths", nargs="+", type=Path)
     r = sub.add_parser("reevaluate", help="re-score all transactions and re-apply current rules")
@@ -64,7 +67,41 @@ def main(argv: list[str] | None = None) -> int:
         result = pipeline.backfill_inbox(since, folder=args.folder,
                                          ack_older_than_days=None if args.keep_alarms else args.ack_older_than)
         print(result)
+        if not result.errors and result.fetched == 0:
+            print(f"Nothing new was found. To see why, run: fraudalert imap-check --since {args.since}"
+                  + (f' --folder "{args.folder}"' if args.folder else ""))
         return 1 if result.errors else 0
+    elif args.cmd == "imap-check":
+        from fraudalert.config import get_settings
+        from fraudalert.ingest.imap_client import diagnose
+
+        since = _parse_since(args.since)
+        if since is None:
+            print(f"--since must be a date like 2022-01-01 or a number of years like 3y, not {args.since!r}", file=sys.stderr)
+            return 2
+        settings = get_settings()
+        if args.folder:
+            settings = settings.model_copy(update={"imap_folder": args.folder})
+        r = diagnose(settings, since)
+        print("Folders on the server:")
+        for f in r["folders"]:
+            print(f"  {f}")
+        print(f"\nChecking {r['folder']!r} since {r['since']}:")
+        rows = [("messages in folder", r.get("messages_in_folder")), ("oldest message in folder", r.get("oldest_in_folder")),
+                ("messages since that date (any sender)", r.get("since_any_sender")),
+                (f"matching sender filter {get_settings().sender_filter or '(none)'!r}", r.get("matching_filters")),
+                ("earliest match", r.get("earliest_match")), ("latest match", r.get("latest_match")),
+                ("dropped by subject filter", r.get("dropped_by_subject_filter"))]
+        for label, value in rows:
+            if value is not None:
+                print(f"  {label}: {value}")
+        if r.get("other_senders"):
+            print("\nOther senders from your bank's domain in that range (not matched by the filter):")
+            for addr, n in r["other_senders"][:15]:
+                print(f"  {n:5d}  {addr}")
+        print()
+        for hint in r["hints"] or ["The server shows matching emails back to the date you asked for; a backfill should fetch them."]:
+            print(f"* {hint}")
     elif args.cmd == "watch":
         while True:
             print(pipeline.sync_inbox(), flush=True)
