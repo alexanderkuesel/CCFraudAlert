@@ -376,12 +376,16 @@ def _cumsum(values) -> list[float]:
     return out
 
 
+def _first_date(session: Session, env) -> date | None:
+    first = session.scalar(select(func.min(Transaction.occurred_at)))
+    return _utc(first).astimezone(env.tz).date() if first is not None else None
+
+
 def _first_full_month(session: Session, env) -> date | None:
     """The first month with complete card history: months before it would read as zero spend."""
-    first = session.scalar(select(func.min(Transaction.occurred_at)))
-    if first is None:
+    d = _first_date(session, env)
+    if d is None:
         return None
-    d = _utc(first).astimezone(env.tz).date()
     return d if d.day == 1 else _add_months(_month_start(d), 1)
 
 
@@ -522,7 +526,9 @@ def overview(session: Session, env, now: datetime | None = None) -> dict:
         "total": {"mtd": total_spark[-1], "last_month": total_spark[-2], "spark": total_spark,
                   "fixed": total["fixed"], "projected": total["projected"],
                   "expected": total["expected"][now.day - 1] if total["expected"] else None,
-                  "budget": round(sum(budgets), 2) if budgets else None},
+                  "budget": round(sum(budgets), 2) if budgets else None,
+                  # spend in the categories that have a budget: what the total budget can be compared with
+                  "budgeted_mtd": round(sum(d["mtd"] for d in devices if d["budget"]), 2)},
         "devices": devices,
     }
 
@@ -541,13 +547,14 @@ def series(session: Session, env, *, category: int | str | None = None, merchant
     selected = _month(month, "month") or this_month
     if selected > this_month:
         raise ValueError("that month hasn't happened yet")
+    # the first day shown: `days` back, or for days <= 0 the first transaction on record
+    start = (_first_date(session, env) or today) if days <= 0 else today - timedelta(days=days - 1)
     if bucket == "month":
-        first = _add_months(this_month, -max(1, round(days / 30)) + 1)
+        first = _month_start(start) if days <= 0 else _add_months(this_month, -max(1, round(days / 30)) + 1)
     elif bucket == "week":
-        first = today - timedelta(days=days - 1)
-        first -= timedelta(days=first.weekday())  # Monday
+        first = start - timedelta(days=start.weekday())  # Monday
     else:
-        first = today - timedelta(days=days - 1)
+        first = start
     start_day = min(first, _add_months(selected, -EXPECTED_MONTHS),
                     _add_months(this_month, -(HISTORY_MONTHS + EXPECTED_MONTHS)))
     rows = spends(session, env, datetime.combine(start_day, datetime.min.time(), tzinfo=env.tz),
@@ -574,9 +581,9 @@ def series(session: Session, env, *, category: int | str | None = None, merchant
         label = c.name if c else UNCATEGORIZED
         budget = float(c.budget_monthly) if c and c.budget_monthly is not None else None
     else:
+        # No setpoint for everything: budgets cover only some categories, so comparing all spending
+        # with their sum would read as "over budget" when no category is.
         keep = lambda k: True  # noqa: E731
-        budgets = [float(b) for b in session.scalars(select(Category.budget_monthly)) if b is not None]
-        budget = sum(budgets) if budgets else None
     rows = [r for r in rows if keep(r.key)]
     pen = _Pen(env, rows, _pen_expenses(session, keep), _first_full_month(session, env))
 
@@ -592,12 +599,15 @@ def series(session: Session, env, *, category: int | str | None = None, merchant
     while d <= today:
         points.append(d)
         d = _add_months(d, 1) if bucket == "month" else d + timedelta(days=7 if bucket == "week" else 1)
-    values = {p: [0.0, 0] for p in points}
+    values = {p: [0.0, 0, 0.0] for p in points}  # total, card transactions, of which fixed expenses
     for r in rows:
         b = bucket_of(r.local.date())
         if b in values:
             values[b][0] += r.amount
-            values[b][1] += 1
+            if r.key.startswith(MANUAL):
+                values[b][2] += r.amount
+            else:
+                values[b][1] += 1
 
     history = []
     for i in range(HISTORY_MONTHS, -1, -1):
@@ -607,7 +617,8 @@ def series(session: Session, env, *, category: int | str | None = None, merchant
                         "current": v["current"], "projected": v["projected"]})
     return {
         "label": label, "device": label_device, "bucket": bucket, "currency": env.home_currency,
-        "points": [{"start": p.isoformat(), "value": round(v[0], 2), "count": v[1]} for p, v in values.items()],
+        "points": [{"start": p.isoformat(), "value": round(v[0], 2), "count": v[1], "fixed": round(v[2], 2)}
+                   for p, v in values.items()],
         "budget": budget,
         "mtd": pen.view(selected, today, budget),
         "history": history,

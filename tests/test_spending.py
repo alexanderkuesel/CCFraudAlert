@@ -159,7 +159,12 @@ def test_series_buckets_and_month_to_date(db):
 
         week = spending.series(s, env(s), bucket="week", days=14, now=NOW)
         assert all(datetime.fromisoformat(p["start"]).weekday() == 0 for p in week["points"])
-        assert week["label"] == "All spending" and week["budget"] == 100
+        # no setpoint for everything: budgets only cover some categories (Groceries has 999 unbudgeted here)
+        assert week["label"] == "All spending" and week["budget"] is None and week["mtd"]["status"] == "none"
+
+        everything = spending.series(s, env(s), bucket="month", days=0, now=NOW)
+        assert [p["start"] for p in everything["points"]] == ["2026-05-01", "2026-06-01"]  # from the first transaction
+        assert spending.series(s, env(s), bucket="day", days=0, now=NOW)["points"][0]["start"] == "2026-05-20"
 
         tag = spending.series(s, env(s), merchant=merchant_key("PIZZA HUT"), bucket="day", days=30, now=NOW)
         assert tag["label"] == "PIZZA HUT" and tag["device"] == "Dining" and tag["budget"] is None
@@ -333,3 +338,18 @@ def test_expected_path_forecast_and_history(db):
     client = TestClient(create_app(init=False))
     assert client.get("/api/spending/series?month=2026-05").json()["mtd"]["month"] == "2026-05-01"
     assert client.get("/api/spending/series?month=nope").status_code == 422
+
+
+def test_fixed_share_of_trend_points_and_budgeted_spend(db):
+    with db.session_scope() as s:
+        spending.seed_categories(s)
+        s.scalar(select(Category).where(Category.name == "Dining")).budget_monthly = 100
+        add(s, "PIZZA HUT", 40, datetime(2026, 6, 3, 16, tzinfo=timezone.utc))
+        add(s, "MYSTERY SHOP", 500, datetime(2026, 6, 3, 17, tzinfo=timezone.utc))  # uncategorised, unbudgeted
+        spending.create_expense(s, env(s), {"name": "Rent", "amount": 900, "day_of_month": 3, "start_month": "2026-06"})
+    with db.session_scope() as s:
+        day = spending.series(s, env(s), bucket="day", days=30, now=NOW)
+        p = next(p for p in day["points"] if p["start"] == "2026-06-03")
+        assert (p["value"], p["fixed"], p["count"]) == (1440, 900, 2)  # rent isn't a card transaction
+        t = spending.overview(s, env(s), now=NOW)["total"]
+        assert (t["mtd"], t["budget"], t["budgeted_mtd"]) == (1440, 100, 40)

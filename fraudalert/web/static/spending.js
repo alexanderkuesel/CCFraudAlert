@@ -144,7 +144,8 @@
       const k = h("div", null, "kpi"); k.append(h("span", label), h("b", value));
       if (sub) k.append(h("small", sub)); box.append(k);
     };
-    kpi("Spent this month", `${money(t.mtd, 0)} ${currency}`, t.budget ? `of ${money(t.budget, 0)} budgeted` : "no budgets set");
+    kpi("Spent this month", `${money(t.mtd, 0)} ${currency}`,
+      t.budget ? `budgeted categories: ${money(t.budgeted_mtd, 0)} of ${money(t.budget, 0)}` : "no budgets set");
     if (t.projected != null) kpi("Month-end forecast", `${money(t.projected, 0)} ${currency}`,
       t.expected != null ? `${signed(t.mtd - t.expected)} vs expected by today` : "at this month's pace");
     else kpi("Month-end forecast", "—", `from day ${MIN_PACE_DAYS}, or once a full month is on record`);
@@ -243,9 +244,19 @@
   }
   const hideTip = () => (tip.hidden = true);
 
+  // Tick labels carry the year on the first tick and whenever it changes ("Jan '26"), so multi-year
+  // ranges stay readable.
+  function tickLabel(iso, bucket, prevIso) {
+    const d = new Date(iso + "T12:00:00"), yr = ` '${String(d.getFullYear()).slice(2)}`;
+    const newYear = !prevIso || prevIso.slice(0, 4) !== iso.slice(0, 4);
+    return (bucket === "month" ? monthName(iso) : dayLabel(iso)) + (newYear ? yr : "");
+  }
+
   function drawTrend() {
     const s = state.series, f = frame($("chart-trend"), 240), pts = s.points;
-    const monthly = s.bucket === "month" && s.budget;
+    const monthly = s.bucket === "month" && s.budget, anyFixed = pts.some(p => p.fixed > 0);
+    $("trend-legend").hidden = !anyFixed;
+    let prevTick = null;
     const max = niceMax(Math.max(...pts.map(p => p.value), monthly ? s.budget * 1.05 : 0, 1));
     yAxis(f, max);
     const slot = f.iw / pts.length, bw = Math.max(Math.min(24, slot - 2), 1); // <= 24px, 2px gap
@@ -253,19 +264,28 @@
     pts.forEach((p, i) => {
       const x = f.m.l + i * slot + (slot - bw) / 2, hgt = (p.value / max) * f.ih, y = f.m.t + f.ih - hgt;
       const over = monthly && p.value >= s.budget ? " hihi" : monthly && p.value >= s.budget * 0.8 ? " hi" : "";
-      if (hgt > 0) {
-        const r = Math.min(4, hgt, bw / 2); // 4px rounded data-end, square at the baseline
-        el("path", { class: "bar" + over, d: `M${x},${y + hgt}V${y + r}Q${x},${y} ${x + r},${y}H${x + bw - r}Q${x + bw},${y} ${x + bw},${y + r}V${y + hgt}Z` }, f.svg);
+      // card spending from the baseline; fixed expenses stacked on top in a lighter tone, 2px apart
+      const cardH = ((p.value - p.fixed) / max) * f.ih, fixedH = hgt - cardH, gap = cardH > 0 && fixedH > 0 ? Math.min(2, fixedH) : 0;
+      const roundTop = (yTop, h, cls) => {
+        const r = Math.min(4, h, bw / 2); // 4px rounded data-end, square at the baseline
+        el("path", { class: cls, d: `M${x},${yTop + h}V${yTop + r}Q${x},${yTop} ${x + r},${yTop}H${x + bw - r}Q${x + bw},${yTop} ${x + bw},${yTop + r}V${yTop + h}Z` }, f.svg);
+      };
+      if (cardH > 0) {
+        if (fixedH > 0) el("rect", { class: "bar" + over, x, y: f.m.t + f.ih - cardH, width: bw, height: cardH }, f.svg);
+        else roundTop(y, hgt, "bar" + over);
       }
+      if (fixedH - gap > 0) roundTop(y, fixedH - gap, "bar fixed");
       const hit = el("rect", { x: f.m.l + i * slot, y: f.m.t, width: slot, height: f.ih, class: "hit" }, f.svg);
       const when = s.bucket === "month" ? new Date(p.start + "T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" })
         : s.bucket === "week" ? "Week of " + dayLabel(p.start) : dayLabel(p.start);
-      const lines = [`${money(p.value)} ${currency}`, when, `${p.count} transaction${p.count === 1 ? "" : "s"}`];
+      const lines = [`${money(p.value)} ${currency}`, when, `${p.count} card transaction${p.count === 1 ? "" : "s"}`];
+      if (p.fixed > 0) lines.push(`incl. ${money(p.fixed, 0)} fixed expenses`);
       if (monthly) lines.push(`${Math.round(p.value / s.budget * 100)}% of budget` + (over ? ` · ${STATUS[over.trim()]}` : ""));
       hit.addEventListener("pointermove", ev => showTip(ev, lines)); hit.addEventListener("pointerleave", hideTip);
       if (i % every === 0) {
         el("text", { x: f.m.l + i * slot + slot / 2, y: f.H - 8, class: "tick", "text-anchor": "middle" }, f.svg)
-          .textContent = s.bucket === "month" ? monthName(p.start) : dayLabel(p.start);
+          .textContent = tickLabel(p.start, s.bucket, prevTick);
+        prevTick = p.start;
       }
     });
     if (monthly) { limitLine(f, s.budget * 0.8, max, "hi", "HI 80%"); limitLine(f, s.budget, max, "hihi", "HIHI budget"); }
@@ -372,7 +392,7 @@
       if (x.expected != null) el("line", { class: "exp-tick", x1: cx - bw / 2 - 6, x2: cx + bw / 2 + 6, y1: Y(x.expected), y2: Y(x.expected) }, f.svg);
       if (x.current && x.projected != null) el("line", { class: "exp-tick forecast", x1: cx - bw / 2 - 6, x2: cx + bw / 2 + 6, y1: Y(x.projected), y2: Y(x.projected) }, f.svg);
       el("text", { x: cx, y: f.H - 8, class: "tick" + (state.series.mtd.month.startsWith(x.month) ? " sel" : ""), "text-anchor": "middle" }, f.svg)
-        .textContent = monthName(x.month + "-01");
+        .textContent = tickLabel(x.month + "-01", "month", i ? hist[i - 1].month + "-01" : null);
       const ref = x.current ? x.projected : x.actual;
       if (x.expected && ref != null) {
         const top = Math.min(y, Y(x.expected), x.current && x.projected != null ? Y(x.projected) : y);
@@ -406,7 +426,8 @@
     const body = t.createTBody();
     [...s.points].reverse().forEach(p => {
       const r = body.insertRow();
-      r.insertCell().textContent = s.bucket === "month" ? new Date(p.start + "T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }) : dayLabel(p.start);
+      r.insertCell().textContent = s.bucket === "month" ? new Date(p.start + "T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" })
+        : new Date(p.start + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
       const v = r.insertCell(); v.className = "num"; v.textContent = money(p.value);
       const c = r.insertCell(); c.className = "num"; c.textContent = String(p.count);
     });
@@ -493,8 +514,18 @@
   // ---------- wiring ----------
   document.querySelectorAll("[data-bucket]").forEach(b => b.addEventListener("click", () => {
     document.querySelectorAll("[data-bucket]").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
-    state.bucket = b.dataset.bucket; loadSeries();
+    state.bucket = b.dataset.bucket; syncRanges(); loadSeries();
   }));
+  // Months need at least a year of range; 30 or 90 days would show one to three bars.
+  function syncRanges() {
+    const month = state.bucket === "month";
+    if (month && state.days > 0 && state.days < 365) state.days = 365;
+    document.querySelectorAll("[data-days]").forEach(x => {
+      const d = Number(x.dataset.days);
+      x.disabled = month && d > 0 && d < 365;
+      x.setAttribute("aria-pressed", String(d === state.days));
+    });
+  }
   document.querySelectorAll("[data-days]").forEach(b => b.addEventListener("click", () => {
     document.querySelectorAll("[data-days]").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
     state.days = Number(b.dataset.days); loadSeries();

@@ -234,8 +234,9 @@ Since every card transaction already lands here, the **Spending** page turns it 
   ticks at HI and the setpoint), a **HI**/**HIHI** badge when a limit is reached, and a 6-month
   sparkline. Expand a category to see its merchants with their month-to-date spend and count.
 * **Trend:** pick anything in the browser (everything, a category, or one merchant) to trend it by
-  **day, week or month** over 30 days, 90 days or a year. On the month view, HI and HIHI limit lines are
-  drawn, and months over a limit are coloured. Every chart has hover tooltips and a table view.
+  **day, week or month** over 30 days, 90 days, a year, or everything on record (months need at least a year). Fixed expenses show as a lighter segment on top of card spending. For a category, the month view draws its HI and HIHI
+  limit lines and colours months over a limit. *All spending* has no budget line, because budgets only
+  cover some categories (the *Spent this month* tile compares the budgeted categories with their budgets). Every chart has hover tooltips and a table view.
 * **Actual vs expected** (setpoint trajectory against process value): the running total for a month
   is plotted against an **expected** curve, which is how your card spending usually builds up through a
   month (the average of the previous 3 complete months, stretched to the month's length) plus that

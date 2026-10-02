@@ -40,6 +40,7 @@
               <button type="button" data-days="30" aria-pressed="false">30 d</button>
               <button type="button" data-days="90" aria-pressed="true">90 d</button>
               <button type="button" data-days="365" aria-pressed="false">1 y</button>
+              <button type="button" data-days="0" aria-pressed="false">All</button>
             </div>
           </div>
         </div>
@@ -47,6 +48,10 @@
           <label for="move-select">Device (category) for this tag</label>
           <select id="move-select"></select>
         </div>
+        <ul class="chart-legend" id="trend-legend" aria-label="Legend" hidden>
+          <li><span class="key-bar"></span>Card spending</li>
+          <li><span class="key-bar fixed"></span>Fixed expenses</li>
+        </ul>
         <div class="chart" id="chart-trend" role="img" aria-label="Spend trend"></div>
         <details class="table-view"><summary>Show as table</summary><div id="trend-table"></div></details>
         <div class="chart-tip" id="tip" hidden></div>

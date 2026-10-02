@@ -278,7 +278,7 @@ def create_app(init: bool = True) -> FastAPI:
         try:
             with session_scope() as s:
                 return spending.series(s, pipeline.Env.load(s, get_settings()), category=category or None,
-                                       merchant=merchant or None, bucket=bucket, days=max(7, min(days, 730)),
+                                       merchant=merchant or None, bucket=bucket, days=0 if days <= 0 else max(7, min(days, 3660)),  # 0 = all history
                                        month=month or None)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc

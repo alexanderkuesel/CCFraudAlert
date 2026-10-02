@@ -364,3 +364,6 @@ button.link.danger { color: var(--danger-text); }
 .month-nav { display: inline-flex; align-items: center; gap: .5rem; font-size: 13px; font-weight: 600; }
 .month-nav span { min-width: 8.5em; text-align: center; }
 .month-nav button:disabled { opacity: .4; cursor: default; }
+.hist .bar.fixed { fill: var(--muted); opacity: .5; }
+.key-bar.fixed { background: var(--muted); opacity: .5; }
+.seg button:disabled { opacity: .4; cursor: default; }
