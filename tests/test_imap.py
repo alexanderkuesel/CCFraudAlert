@@ -139,3 +139,85 @@ def test_backfill_since_argument():
     assert _parse_since("3y").year == date.today().year - 3
     assert _parse_since("2 years").year == date.today().year - 2
     assert _parse_since("soon") is None
+
+
+class SearchingIMAP:
+    """A fake server that honours SINCE / FROM / OR, INTERNALDATE and LIST, for diagnose()."""
+
+    folders = {"INBOX": [], "[Gmail]/Todos": []}  # folder -> [(date, from, subject)]
+
+    def __init__(self, host, port):
+        self.box = []
+
+    def login(self, user, pw):
+        pass
+
+    def list(self):
+        return "OK", [f'(\\\\HasNoChildren) "/" "{f}"'.encode() for f in self.folders]
+
+    def select(self, folder, readonly=False):
+        name = folder.strip('"')
+        if name not in self.folders:
+            return "NO", [b"no such folder"]
+        self.box = self.folders[name]
+        return "OK", [str(len(self.box)).encode()]
+
+    def _match(self, query, msg):
+        import re as _re
+        from datetime import datetime as _dt
+
+        since = _dt.strptime(_re.search(r"SINCE (\S+)", query).group(1), "%d-%b-%Y").date()
+        froms = _re.findall(r'FROM "([^"]+)"', query)
+        return msg[0] >= since and (not froms or any(f.lower() in msg[1].lower() for f in froms))
+
+    def _date(self, i):
+        return f'{i + 1} (INTERNALDATE "{self.box[i][0].strftime("%d-%b-%Y")} 12:00:00 +0000")'.encode()
+
+    def fetch(self, seq, what):
+        return "OK", [self._date(int(seq) - 1)]
+
+    def uid(self, cmd, *args):
+        if cmd == "SEARCH":
+            return "OK", [b" ".join(str(i + 1).encode() for i, m in enumerate(self.box) if self._match(args[1], m))]
+        ids, what = args
+        idx = [int(x) - 1 for x in ids.split(b",")]
+        if "INTERNALDATE" in what:
+            return "OK", [self._date(idx[0])]
+        field = "From" if "FROM" in what else "Subject"
+        pos = 1 if field == "From" else 2
+        return "OK", [(b"h", f"{field}: {self.box[i][pos]}\r\n".encode()) for i in idx]
+
+    def logout(self):
+        pass
+
+
+def test_imap_check_explains_a_short_backfill(monkeypatch):
+    from fraudalert.config import Settings
+    from fraudalert.ingest import imap_client
+
+    new, old = "alertas@notificacionesbaccr.com", "notificacion@baccredomatic.cr"
+    SearchingIMAP.folders = {
+        # Gmail's folder size limit: INBOX only shows the newest few months
+        "INBOX": [(date(2026, 6, 1), new, "Notificación de transacción")],
+        "[Gmail]/Todos": [(date(2023, 2, 1), old, "Alerta de transacción"), (date(2023, 3, 1), old, "Alerta de transacción"),
+                          (date(2024, 5, 1), "promos@baccredomatic.cr", "Ofertas"),
+                          (date(2025, 1, 1), new, "Notificación de transacción"),
+                          (date(2026, 6, 1), new, "Notificación de transacción")],
+    }
+    monkeypatch.setattr(imap_client.imaplib, "IMAP4_SSL", SearchingIMAP)
+    settings = Settings(imap_user="me", imap_password="pw", sender_filter=new + ", " + old.replace("notificacion@", "x@"))
+
+    r = imap_client.diagnose(settings, date(2023, 1, 1))
+    assert r["folders"] == ["INBOX", "[Gmail]/Todos"]
+    assert r["oldest_in_folder"] == "2026-06-01" and r["matching_filters"] == 1
+    assert any("Folder size limits" in h for h in r["hints"])
+
+    r = imap_client.diagnose(settings.model_copy(update={"imap_folder": "[Gmail]/Todos"}), date(2023, 1, 1))
+    assert (r["messages_in_folder"], r["since_any_sender"], r["matching_filters"]) == (5, 5, 2)
+    assert r["earliest_match"] == "2025-01-01"
+    assert dict(r["other_senders"]) == {old: 2, "promos@baccredomatic.cr": 1}
+    assert any("SENDER_FILTER" in h for h in r["hints"]) and not any("Folder size" in h for h in r["hints"])
+
+    r = imap_client.diagnose(settings.model_copy(update={"imap_folder": "[Gmail]/All Mail"}), date(2023, 1, 1))
+    assert any("Can't open folder" in h for h in r["hints"])
+    assert imap_client._sender_keyword(new) == "notificacionesbaccr"
