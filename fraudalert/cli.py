@@ -19,6 +19,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--sync-interval", type=int, default=0, help="also sync the inbox every N seconds")
+    bf = sub.add_parser("backfill", help="fetch older bank emails, e.g. a few years back, for history and trends")
+    bf.add_argument("--since", required=True, help="how far back to go: a date (2022-01-01) or a number of years (3y)")
+    bf.add_argument("--folder", help='IMAP folder for this run, e.g. "[Gmail]/All Mail" to include archived emails')
+    bf.add_argument("--ack-older-than", type=int, default=30, metavar="DAYS",
+                    help="acknowledge alarms on backfilled transactions older than this as legit (default 30)")
+    bf.add_argument("--keep-alarms", action="store_true", help="leave alarms on backfilled transactions unacknowledged")
     i = sub.add_parser("import-eml", help="ingest saved .eml files")
     i.add_argument("paths", nargs="+", type=Path)
     r = sub.add_parser("reevaluate", help="re-score all transactions and re-apply current rules")
@@ -46,6 +52,17 @@ def main(argv: list[str] | None = None) -> int:
         print("database ready")
     elif args.cmd == "sync":
         result = pipeline.sync_inbox()
+        print(result)
+        return 1 if result.errors else 0
+    elif args.cmd == "backfill":
+        since = _parse_since(args.since)
+        if since is None:
+            print(f"--since must be a date like 2022-01-01 or a number of years like 3y, not {args.since!r}", file=sys.stderr)
+            return 2
+        print(f"Backfilling bank emails since {since} from {args.folder or 'the configured folder'}; "
+              "this can take a while for a few years of email...", flush=True)
+        result = pipeline.backfill_inbox(since, folder=args.folder,
+                                         ack_older_than_days=None if args.keep_alarms else args.ack_older_than)
         print(result)
         return 1 if result.errors else 0
     elif args.cmd == "watch":
@@ -150,5 +167,26 @@ def export_features(out: Path) -> None:
     print(f"wrote {n} rows to {out}", file=sys.stderr)
 
 
+def _parse_since(text: str):
+    """"2022-01-01" -> that date; "3y" -> three years ago today."""
+    import re
+    from datetime import date
+
+    text = text.strip().lower()
+    m = re.fullmatch(r"(\d+)\s*y(ears?)?", text)
+    if m:
+        today = date.today()
+        years = int(m.group(1))
+        try:
+            return today.replace(year=today.year - years)
+        except ValueError:  # Feb 29
+            return today.replace(year=today.year - years, day=28)
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
 if __name__ == "__main__":
     sys.exit(main())
+

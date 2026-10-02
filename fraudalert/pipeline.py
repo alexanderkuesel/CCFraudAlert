@@ -3,7 +3,7 @@
 import logging
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -316,6 +316,95 @@ def _sync(settings: Settings, result: SyncResult) -> None:
     except Exception as exc:  # noqa: BLE001
         log.exception("sync failed")
         result.errors.append(str(exc))
+
+
+BACKFILL_NOTE = "Historical (backfill): acknowledged automatically"
+
+
+@dataclass
+class BackfillResult(SyncResult):
+    acknowledged: int = 0
+    retrained: bool = False
+
+    def __str__(self) -> str:
+        return (super().__str__() + f"; {self.acknowledged} historical alarms acknowledged as legit"
+                + ("; anomaly model retrained" if self.retrained else ""))
+
+
+def backfill_inbox(since: date, folder: str | None = None, ack_older_than_days: int | None = 30,
+                   settings: Settings | None = None) -> BackfillResult:
+    """Fetch bank emails back to `since`, e.g. a few years, without disturbing the regular sync.
+
+    * Uses its own date range, not the incremental sync position, so it can run at any time and
+      repeatedly (emails already stored are skipped by Message-ID).
+    * `folder` overrides FRAUDALERT_IMAP_FOLDER for this run, e.g. Gmail's "[Gmail]/All Mail" to
+      include archived alerts.
+    * Nothing old is notified (see NOTIFY_MAX_AGE).
+    * Afterwards every transaction is re-scored against its now-longer history, and the anomaly
+      model is retrained when it's in use.
+    * Alarms on backfilled transactions older than `ack_older_than_days` are acknowledged as legit
+      (you'd have disputed a fraudulent charge back then), with a note saying so, so years of
+      history don't flood the alarm summary. Pass None to leave them unacknowledged.
+    """
+    from fraudalert.anomaly.training import NotEnoughData
+    from fraudalert.ingest.imap_client import fetch_messages
+
+    settings = settings or get_settings()
+    if folder:
+        settings = settings.model_copy(update={"imap_folder": folder})
+    result = BackfillResult()
+    if not _sync_lock.acquire(blocking=False):
+        result.errors.append("a sync is already running")
+        return result
+    added: list[int] = []
+    try:
+        with try_advisory_lock(SYNC_LOCK_KEY) as acquired:
+            if not acquired:
+                result.errors.append("a sync is already running in another process (e.g. the worker)")
+                return result
+            detector = get_detector(settings.detector)
+
+            def seen(mid: str) -> bool:
+                with session_scope() as s:
+                    return s.scalar(select(RawEmail.id).where(RawEmail.message_id == mid)) is not None
+
+            try:
+                for msg in fetch_messages(settings, since, seen):
+                    try:
+                        with session_scope() as session:
+                            txn = ingest_message(session, msg, settings, detector, load_rules(session), result)
+                            if txn is not None:
+                                added.append(txn.id)
+                    except Exception as exc:  # noqa: BLE001
+                        log.exception("failed to ingest %s", msg.message_id)
+                        result.errors.append(f"{msg.message_id}: {exc}")
+            except Exception as exc:  # noqa: BLE001
+                log.exception("backfill failed")
+                result.errors.append(str(exc))
+    finally:
+        _sync_lock.release()
+
+    if added:
+        # Earlier transactions were scored without this history; recompute features and scores.
+        reevaluate_all(settings)
+        if settings.detector == "iforest":
+            try:
+                retrain_anomaly_model(settings)
+                result.retrained = True
+            except NotEnoughData:
+                pass
+    if added and ack_older_than_days is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=ack_older_than_days)
+        with session_scope() as session:
+            for i in range(0, len(added), 500):
+                for txn in session.scalars(select(Transaction).where(
+                        Transaction.id.in_(added[i:i + 500]), Transaction.flagged.is_(True),
+                        Transaction.label_fraud.is_(None), Transaction.occurred_at < cutoff)):
+                    txn.label_fraud = False
+                    txn.comment = txn.comment or BACKFILL_NOTE
+                    result.acknowledged += 1
+    log.info("backfill: %s", result)
+    return result
 
 
 def import_eml_files(paths: list[Path], settings: Settings | None = None) -> SyncResult:
