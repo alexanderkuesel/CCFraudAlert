@@ -342,35 +342,110 @@ def spends(session: Session, env, start: datetime, end: datetime) -> list[Spend]
             continue
         out.append(Spend(merchant_key(merchant or "") or "(unknown)", merchant or "(unknown)",
                          _utc(occurred_at).astimezone(env.tz), value))
-    # Fixed expenses are booked at noon local time on their day, up to `end` (nothing in the future).
+    # Fixed expenses are booked at the start of their day (local time), up to `end` (nothing in the future).
     first, last = _utc(start).astimezone(env.tz).date(), (_utc(end).astimezone(env.tz) - timedelta(microseconds=1)).date()
     for e in session.scalars(select(ManualExpense)):
         value = env.fx.to_home(float(e.amount), e.currency)
         for day in _occurrences(e, first, last):
-            local = datetime.combine(day, datetime.min.time(), tzinfo=env.tz).replace(hour=12)
+            local = datetime.combine(day, datetime.min.time(), tzinfo=env.tz)
             if start <= local < end:
                 out.append(Spend(f"{MANUAL}{e.id}", e.name, local, value))
     return out
 
 
-MIN_PACE_DAYS = 7  # a straight-line projection from the first few days of a month is noise
+MIN_PACE_DAYS = 7  # without history, a straight-line projection from the first few days of a month is noise
+EXPECTED_MONTHS = 3  # the expected path is the average of this many previous months
+HISTORY_MONTHS = 6  # completed months in the expected-vs-actual comparison
 
 
-def _fixed_month(session: Session, env, month: date) -> dict[str, float]:
-    """Tag key -> fixed-expense amount (home currency) booked in the whole of `month`."""
-    last = _add_months(month, 1) - timedelta(days=1)
-    out = {}
-    for e in session.scalars(select(ManualExpense)):
-        if _occurrences(e, month, last):
-            out[f"{MANUAL}{e.id}"] = env.fx.to_home(float(e.amount), e.currency)
+# ---- expected path & forecast ---------------------------------------------------------------------
+# "Expected" is the setpoint trajectory: how your card spending usually accumulates through a month
+# (the average of the previous EXPECTED_MONTHS complete months, stretched to this month's length),
+# plus this month's fixed expenses on their due days. "Actual" is the process value. The forecast
+# continues from today's actual along the expected path.
+
+def _days_in(month: date) -> int:
+    return (_add_months(month, 1) - month).days
+
+
+def _cumsum(values) -> list[float]:
+    out, running = [], 0.0
+    for v in values:
+        running += v
+        out.append(running)
     return out
 
 
-def _projection(mtd: float, fixed_to_date: float, fixed_month: float, day: int, days: int) -> float | None:
-    """Month-end estimate: card (variable) spend at this month's pace, plus fixed expenses at face value."""
-    if day < MIN_PACE_DAYS:
+def _first_date(session: Session, env) -> date | None:
+    first = session.scalar(select(func.min(Transaction.occurred_at)))
+    return _utc(first).astimezone(env.tz).date() if first is not None else None
+
+
+def _first_full_month(session: Session, env) -> date | None:
+    """The first month with complete card history: months before it would read as zero spend."""
+    d = _first_date(session, env)
+    if d is None:
         return None
-    return round((mtd - fixed_to_date) / day * days + fixed_month, 2)
+    return d if d.day == 1 else _add_months(_month_start(d), 1)
+
+
+class _Pen:
+    """Spend rows and fixed expenses of one trend pen (everything, a category or a tag), by month."""
+
+    def __init__(self, env, rows: list[Spend], expenses: list[ManualExpense], first_full: date | None):
+        self.env, self.expenses, self.first_full = env, expenses, first_full
+        self.by_month: dict[date, list[Spend]] = defaultdict(list)
+        for r in rows:
+            self.by_month[_month_start(r.local.date())].append(r)
+
+    def daily(self, month: date, variable_only=False) -> list[float]:
+        out = [0.0] * _days_in(month)
+        for r in self.by_month.get(month, ()):
+            if not (variable_only and r.key.startswith(MANUAL)):
+                out[r.local.day - 1] += r.amount
+        return out
+
+    def fixed_daily(self, month: date) -> list[float]:
+        out = [0.0] * _days_in(month)
+        for e in self.expenses:
+            for day in _occurrences(e, month, _add_months(month, 1) - timedelta(days=1)):
+                out[day.day - 1] += self.env.fx.to_home(float(e.amount), e.currency)
+        return out
+
+    def expected_variable(self, month: date) -> tuple[list[float] | None, list[date]]:
+        """Average cumulative card spend of the previous complete months, resampled to `month`'s days."""
+        basis = [m for m in (_add_months(month, -i) for i in range(1, EXPECTED_MONTHS + 1))
+                 if self.first_full and m >= self.first_full]
+        if not basis:
+            return None, []
+        n, curves = _days_in(month), []
+        for m in basis:
+            cum, size = _cumsum(self.daily(m, variable_only=True)), _days_in(m)
+            curves.append([cum[min(size, -(-d * size // n)) - 1] for d in range(1, n + 1)])
+        return [sum(c[i] for c in curves) / len(curves) for i in range(n)], basis
+
+    def view(self, month: date, today: date, budget: float | None) -> dict:
+        n, current = _days_in(month), month == _month_start(today)
+        upto = today.day if current else n
+        actual = [round(v, 2) for v in _cumsum(self.daily(month))[:upto]]
+        fixed = self.fixed_daily(month)
+        var, basis = self.expected_variable(month)
+        expected = [round(v + f, 2) for v, f in zip(var, _cumsum(fixed))] if var else None
+        now_value = actual[-1] if actual else 0.0
+        forecast = None
+        if current:
+            if var:
+                forecast = now_value + (var[-1] - var[upto - 1]) + sum(fixed[upto:])
+            elif upto >= MIN_PACE_DAYS:
+                done = sum(fixed[:upto])
+                forecast = (now_value - done) / upto * n + sum(fixed)
+        return {
+            "month": month.isoformat(), "days_in_month": n, "current": current, "cumulative": actual,
+            "expected": expected, "basis": [m.isoformat()[:7] for m in basis],
+            "fixed": round(sum(fixed), 2), "budget": budget,
+            "projected": round(forecast, 2) if forecast is not None else None,
+            "status": _status(now_value, budget),
+        }
 
 
 def _status(value: float, budget: float | None) -> str:
@@ -379,33 +454,39 @@ def _status(value: float, budget: float | None) -> str:
     return "hihi" if value >= budget * HIHI else "hi" if value >= budget * HI else "ok"
 
 
+def _pen_expenses(session: Session, keep) -> list[ManualExpense]:
+    return [e for e in session.scalars(select(ManualExpense)) if keep(f"{MANUAL}{e.id}")]
+
+
 def overview(session: Session, env, now: datetime | None = None) -> dict:
     """The tag browser: every category ("device") with its merchants ("tags"), month-to-date values,
-    last month, a 6-month sparkline, and budget status."""
+    last month, a 6-month sparkline, budget status and a month-end forecast."""
     sync_tags(session)
     now = _utc(now or datetime.now(timezone.utc)).astimezone(env.tz)
     this_month = _month_start(now.date())
-    spark_start = _add_months(this_month, -(SPARK_MONTHS - 1))
+    spark_start = _add_months(this_month, -(max(SPARK_MONTHS - 1, EXPECTED_MONTHS)))
     start = datetime.combine(spark_start, datetime.min.time(), tzinfo=env.tz)
     rows = spends(session, env, start, _utc(now) + timedelta(seconds=1))
-    months = [_add_months(spark_start, i) for i in range(SPARK_MONTHS)]
+    months = [_add_months(this_month, i - SPARK_MONTHS + 1) for i in range(SPARK_MONTHS)]
     idx = {m: i for i, m in enumerate(months)}
 
     tags = {t.merchant_key: t for t in session.scalars(select(MerchantTag))}
     catmap = _category_map(session)
-    expense_names = {f"{MANUAL}{i}": n for i, n in session.execute(select(ManualExpense.id, ManualExpense.name))}
+    expenses = session.scalars(select(ManualExpense)).all()
+    expense_names = {f"{MANUAL}{e.id}": e.name for e in expenses}
+    first_full = _first_full_month(session, env)
     cats = session.scalars(select(Category).order_by(Category.sort, Category.name)).all()
     names: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     tag_spark: dict[str, list[float]] = defaultdict(lambda: [0.0] * SPARK_MONTHS)
     tag_count: dict[str, int] = defaultdict(int)
     for r in rows:
+        m = _month_start(r.local.date())
+        if m not in idx:
+            continue
         names[r.key][r.name] += 1
-        tag_spark[r.key][idx[_month_start(r.local.date())]] += r.amount
-        if _month_start(r.local.date()) == this_month:
+        tag_spark[r.key][idx[m]] += r.amount
+        if m == this_month:
             tag_count[r.key] += 1
-
-    def cat_of(key):
-        return catmap.get(key)
 
     def tag_entry(key):
         sp = [round(v, 2) for v in tag_spark[key]]
@@ -415,88 +496,96 @@ def overview(session: Session, env, now: datetime | None = None) -> dict:
                 "count": tag_count[key],
                 "assigned_by": "manual" if key.startswith(MANUAL) else t.assigned_by if t else "auto"}
 
-    day_of_month = now.day
-    days_in_month = (_add_months(this_month, 1) - this_month).days
-    fixed = _fixed_month(session, env, this_month)
-    fixed_done = defaultdict(float)
-    for r in rows:
-        if r.key.startswith(MANUAL) and _month_start(r.local.date()) == this_month:
-            fixed_done[r.key] += r.amount
+    fixed_keys = {f"{MANUAL}{e.id}" for e in expenses if _occurrences(e, this_month, _add_months(this_month, 1) - timedelta(days=1))}
     devices = []
     groups = [(c.id, c.name, float(c.budget_monthly) if c.budget_monthly is not None else None) for c in cats]
     groups.append((None, UNCATEGORIZED, None))
     for cid, name, budget in groups:
-        keys = [k for k in set(tag_spark) | set(fixed) if cat_of(k) == cid]
-        spark = [round(sum(tag_spark[k][i] for k in keys), 2) for i in range(SPARK_MONTHS)]
-        mtd = spark[-1]
+        keys = [k for k in set(tag_spark) | fixed_keys if catmap.get(k) == cid]
         if cid is None and not keys:
             continue
+        spark = [round(sum(tag_spark[k][i] for k in keys), 2) for i in range(SPARK_MONTHS)]
+        mtd = spark[-1]
+        view = _Pen(env, [r for r in rows if catmap.get(r.key) == cid],
+                    [e for e in expenses if e.category_id == cid], first_full).view(this_month, now.date(), budget)
         devices.append({
             "id": cid, "name": name, "budget": budget, "mtd": mtd, "last_month": spark[-2], "spark": spark,
-            "fixed": round(sum(fixed.get(k, 0) for k in keys), 2),
-            "projected": _projection(mtd, sum(fixed_done[k] for k in keys), sum(fixed.get(k, 0) for k in keys),
-                                     day_of_month, days_in_month),
+            "fixed": view["fixed"], "projected": view["projected"],
+            "expected": view["expected"][now.day - 1] if view["expected"] else None,
             "pct": round(mtd / budget, 3) if budget else None, "status": _status(mtd, budget),
             "tags": sorted((tag_entry(k) for k in keys), key=lambda t: (-t["mtd"], -sum(t["spark"]), t["name"])),
         })
     total_spark = [round(sum(d["spark"][i] for d in devices), 2) for i in range(SPARK_MONTHS)]
     budgets = [d["budget"] for d in devices if d["budget"]]
+    total = _Pen(env, rows, list(expenses), first_full).view(this_month, now.date(), sum(budgets) if budgets else None)
     return {
         "currency": env.home_currency,
         "month": this_month.isoformat(), "months": [m.isoformat() for m in months],
-        "day_of_month": day_of_month, "days_in_month": days_in_month,
+        "day_of_month": now.day, "days_in_month": _days_in(this_month),
         "limits": {"hi": HI, "hihi": HIHI},
         "total": {"mtd": total_spark[-1], "last_month": total_spark[-2], "spark": total_spark,
-                  "fixed": round(sum(fixed.values()), 2),
-                  "projected": _projection(total_spark[-1], sum(fixed_done.values()), sum(fixed.values()),
-                                           day_of_month, days_in_month),
-                  "budget": round(sum(budgets), 2) if budgets else None},
+                  "fixed": total["fixed"], "projected": total["projected"],
+                  "expected": total["expected"][now.day - 1] if total["expected"] else None,
+                  "budget": round(sum(budgets), 2) if budgets else None,
+                  # spend in the categories that have a budget: what the total budget can be compared with
+                  "budgeted_mtd": round(sum(d["mtd"] for d in devices if d["budget"]), 2)},
         "devices": devices,
     }
 
 
 def series(session: Session, env, *, category: int | str | None = None, merchant: str | None = None,
-           bucket: str = "day", days: int = 90, now: datetime | None = None) -> dict:
+           bucket: str = "day", days: int = 90, month: str | None = None, now: datetime | None = None) -> dict:
     """A historian trend: spend per day/week/month for one tag (merchant key), one device (category id,
-    or "uncategorized"), or everything; plus this month's running total against the budget."""
+    or "uncategorized"), or everything. Plus, for `month` (default: this one), the running total against
+    the expected path and the budget, and how recent months compared with what was expected."""
     if bucket not in BUCKETS:
         raise ValueError(f"bucket must be one of {', '.join(BUCKETS)}")
     sync_tags(session)
     now = _utc(now or datetime.now(timezone.utc)).astimezone(env.tz)
     today = now.date()
+    this_month = _month_start(today)
+    selected = _month(month, "month") or this_month
+    if selected > this_month:
+        raise ValueError("that month hasn't happened yet")
+    # the first day shown: `days` back, or for days <= 0 the first transaction on record
+    start = (_first_date(session, env) or today) if days <= 0 else today - timedelta(days=days - 1)
     if bucket == "month":
-        first = _add_months(_month_start(today), -max(1, round(days / 30)) + 1)
+        first = _month_start(start) if days <= 0 else _add_months(this_month, -max(1, round(days / 30)) + 1)
     elif bucket == "week":
-        first = today - timedelta(days=days - 1)
-        first -= timedelta(days=first.weekday())  # Monday
+        first = start - timedelta(days=start.weekday())  # Monday
     else:
-        first = today - timedelta(days=days - 1)
-    month_start = _month_start(today)
-    start_day = min(first, month_start)
+        first = start
+    start_day = min(first, _add_months(selected, -EXPECTED_MONTHS),
+                    _add_months(this_month, -(HISTORY_MONTHS + EXPECTED_MONTHS)))
     rows = spends(session, env, datetime.combine(start_day, datetime.min.time(), tzinfo=env.tz),
                   _utc(now) + timedelta(seconds=1))
 
     tags = _category_map(session)
-    budget, label = None, "All spending"
+    budget, label, label_device = None, "All spending", None
     if merchant is not None:
-        rows = [r for r in rows if r.key == merchant]
-        label = rows[0].name if rows else merchant
+        keep = lambda k: k == merchant  # noqa: E731
+        label = next((r.name for r in rows if r.key == merchant), None)
+        if label is None and merchant.startswith(MANUAL):
+            e = session.get(ManualExpense, _manual_id(merchant))
+            label = e.name if e else merchant
+        label = label or merchant
         cid = tags.get(merchant)
         parent = session.get(Category, cid) if cid else None
         label_device = parent.name if parent else UNCATEGORIZED
     elif category is not None:
         cid = None if category in ("uncategorized", None) else int(category)
-        rows = [r for r in rows if tags.get(r.key) == cid]
         c = session.get(Category, cid) if cid is not None else None
         if cid is not None and c is None:
             raise LookupError("no such category")
+        keep = lambda k: tags.get(k) == cid  # noqa: E731
         label = c.name if c else UNCATEGORIZED
         budget = float(c.budget_monthly) if c and c.budget_monthly is not None else None
-        label_device = None
     else:
-        budgets = [float(b) for b in session.scalars(select(Category.budget_monthly)) if b is not None]
-        budget = sum(budgets) if budgets else None
-        label_device = None
+        # No setpoint for everything: budgets cover only some categories, so comparing all spending
+        # with their sum would read as "over budget" when no category is.
+        keep = lambda k: True  # noqa: E731
+    rows = [r for r in rows if keep(r.key)]
+    pen = _Pen(env, rows, _pen_expenses(session, keep), _first_full_month(session, env))
 
     def bucket_of(d: date) -> date:
         if bucket == "month":
@@ -510,39 +599,27 @@ def series(session: Session, env, *, category: int | str | None = None, merchant
     while d <= today:
         points.append(d)
         d = _add_months(d, 1) if bucket == "month" else d + timedelta(days=7 if bucket == "week" else 1)
-    values = {p: [0.0, 0] for p in points}
+    values = {p: [0.0, 0, 0.0] for p in points}  # total, card transactions, of which fixed expenses
     for r in rows:
         b = bucket_of(r.local.date())
         if b in values:
             values[b][0] += r.amount
-            values[b][1] += 1
+            if r.key.startswith(MANUAL):
+                values[b][2] += r.amount
+            else:
+                values[b][1] += 1
 
-    # month to date, cumulative by day, against the monthly budget
-    days_in_month = (_add_months(month_start, 1) - month_start).days
-    daily = [0.0] * days_in_month
-    for r in rows:
-        if r.local.date() >= month_start:
-            daily[r.local.day - 1] += r.amount
-    cumulative, running = [], 0.0
-    for i in range(today.day):
-        running += daily[i]
-        cumulative.append(round(running, 2))
-    keys = {r.key for r in rows} if merchant is None else {merchant}
-    if merchant is None and category is not None:
-        keys |= {k for k, c in tags.items() if c == cid}
-    elif merchant is None:
-        keys |= set(tags)
-    fixed_all = _fixed_month(session, env, month_start)
-    fixed_month = sum(v for k, v in fixed_all.items() if k in keys)
-    fixed_done = sum(r.amount for r in rows if r.key.startswith(MANUAL) and r.local.date() >= month_start)
+    history = []
+    for i in range(HISTORY_MONTHS, -1, -1):
+        v = pen.view(_add_months(this_month, -i), today, budget)
+        history.append({"month": v["month"][:7], "actual": v["cumulative"][-1] if v["cumulative"] else 0.0,
+                        "expected": v["expected"][-1] if v["expected"] else None,
+                        "current": v["current"], "projected": v["projected"]})
     return {
         "label": label, "device": label_device, "bucket": bucket, "currency": env.home_currency,
-        "points": [{"start": p.isoformat(), "value": round(v[0], 2), "count": v[1]} for p, v in values.items()],
+        "points": [{"start": p.isoformat(), "value": round(v[0], 2), "count": v[1], "fixed": round(v[2], 2)}
+                   for p, v in values.items()],
         "budget": budget,
-        "mtd": {"month": month_start.isoformat(), "days_in_month": days_in_month, "cumulative": cumulative,
-                "budget": budget, "status": _status(cumulative[-1] if cumulative else 0.0, budget),
-                "fixed": round(fixed_month, 2),
-                "projected": _projection(cumulative[-1] if cumulative else 0.0, fixed_done, fixed_month,
-                                         today.day, days_in_month)},
+        "mtd": pen.view(selected, today, budget),
+        "history": history,
     }
-

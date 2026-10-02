@@ -40,6 +40,7 @@
               <button type="button" data-days="30" aria-pressed="false">30 d</button>
               <button type="button" data-days="90" aria-pressed="true">90 d</button>
               <button type="button" data-days="365" aria-pressed="false">1 y</button>
+              <button type="button" data-days="0" aria-pressed="false">All</button>
             </div>
           </div>
         </div>
@@ -47,13 +48,43 @@
           <label for="move-select">Device (category) for this tag</label>
           <select id="move-select"></select>
         </div>
+        <ul class="chart-legend" id="trend-legend" aria-label="Legend" hidden>
+          <li><span class="key-bar"></span>Card spending</li>
+          <li><span class="key-bar fixed"></span>Fixed expenses</li>
+        </ul>
         <div class="chart" id="chart-trend" role="img" aria-label="Spend trend"></div>
+        <details class="table-view"><summary>Show as table</summary><div id="trend-table"></div></details>
         <div class="chart-tip" id="tip" hidden></div>
       </div>
       <div class="card">
-        <h3 class="chart-title">This month, running total <span class="muted" id="mtd-sub"></span></h3>
-        <div class="chart" id="chart-mtd" role="img" aria-label="Month to date running total against budget"></div>
-        <details class="table-view"><summary>Show as table</summary><div id="trend-table"></div></details>
+        <div class="pen-head">
+          <h3 class="chart-title">Running total: actual vs expected</h3>
+          <div class="month-nav" role="group" aria-label="Month">
+            <button type="button" class="btn btn-sm" id="mtd-prev" aria-label="Previous month">‹</button>
+            <span id="mtd-month"></span>
+            <button type="button" class="btn btn-sm" id="mtd-next" aria-label="Next month">›</button>
+          </div>
+        </div>
+        <p class="muted chart-sub" id="mtd-sub"></p>
+        <ul class="chart-legend" aria-label="Legend">
+          <li><span class="key-line actual"></span>Actual</li>
+          <li><span class="key-line expected"></span>Expected <span class="muted" id="mtd-basis"></span></li>
+          <li id="key-forecast"><span class="key-line forecast"></span>Forecast</li>
+        </ul>
+        <div class="chart" id="chart-mtd" role="img" aria-label="Running total for the month: actual against expected and budget"></div>
+        <details class="table-view"><summary>Show as table</summary><div id="mtd-table"></div></details>
+      </div>
+      <div class="card">
+        <h3 class="chart-title">Expected vs actual, by month</h3>
+        <p class="muted chart-sub">Bars are what you spent, ticks what your previous months said to expect. Click a month to open
+          its running total.</p>
+        <ul class="chart-legend" aria-label="Legend">
+          <li><span class="key-bar"></span>Actual</li>
+          <li><span class="key-tick"></span>Expected</li>
+          <li><span class="key-tick forecast"></span>Forecast (this month)</li>
+        </ul>
+        <div class="chart" id="chart-hist" role="img" aria-label="Expected against actual spend for recent months"></div>
+        <details class="table-view"><summary>Show as table</summary><div id="hist-table"></div></details>
       </div>
     </div>
   </section>

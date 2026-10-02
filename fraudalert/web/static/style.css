@@ -310,7 +310,7 @@ pre { white-space: pre-wrap; font-size: 12px; max-height: 240px; overflow: auto;
 .hist .limit-label { font-size: 11px; font-weight: 700; fill: var(--fg); paint-order: stroke; stroke: var(--panel); stroke-width: 3px; }
 .hist .area { fill: var(--pen-wash); }
 .hist .pen { fill: none; stroke: var(--pen); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-.hist .projection { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 2 4; stroke-linecap: round; }
+.hist .projection { fill: none; stroke: var(--muted); stroke-width: 2; stroke-dasharray: 2 4; stroke-linecap: round; }
 .hist .pen-dot { fill: var(--pen); stroke: var(--panel); stroke-width: 2; }
 .hist .pen-dot.hi { fill: var(--p2); } .hist .pen-dot.hihi { fill: var(--p1); }
 .hist .end-label { font-size: 12px; font-weight: 700; fill: var(--fg); font-variant-numeric: tabular-nums; }
@@ -338,3 +338,32 @@ button.link.danger { color: var(--danger-text); }
 #fx-table input.fx-day { min-width: 0; width: 4.2em; }
 #fx-table input[type="month"] { min-width: 128px; }
 #fx-table tfoot td { background: var(--panel); border-top: 2px solid var(--border); }
+
+/* actual vs expected (setpoint trajectory) */
+.hist { --expected: #8a8e94; }
+@media (prefers-color-scheme: dark) { .hist { --expected: #7d8188; } }
+.hist .expected { fill: none; stroke: var(--expected); stroke-width: 2; stroke-dasharray: 7 5; stroke-linecap: round; stroke-linejoin: round; }
+.hist .gap { fill: var(--pen-wash); stroke: none; }
+.hist .muted-label { fill: var(--muted); font-weight: 600; font-size: 11px; paint-order: stroke; stroke: var(--panel); stroke-width: 3px; }
+.hist .delta-label { font-size: 11px; font-weight: 700; fill: var(--fg); font-variant-numeric: tabular-nums; }
+.hist .bar.partial { fill: var(--muted); opacity: .55; }
+.hist .exp-tick { stroke: var(--fg); stroke-width: 3; stroke-linecap: round; }
+.hist .exp-tick.forecast { stroke-width: 2; stroke-dasharray: 2 4; }
+.hist .hit.clickable { cursor: pointer; }
+.hist .tick.sel { font-weight: 800; fill: var(--fg); }
+.chart-sub { margin: -.2rem 0 .4rem; font-size: 13px; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: .3rem 1rem; list-style: none; padding: 0; margin: 0 0 .4rem; font-size: 12px; }
+.chart-legend li { display: inline-flex; align-items: center; gap: .4rem; }
+.chart-legend li[hidden] { display: none; }
+.key-line { display: inline-block; width: 22px; height: 0; border-top: 2px solid var(--pen); }
+.key-line.expected { border-top: 2px dashed var(--expected); }
+.key-line.forecast { border-top: 2px dotted var(--muted); }
+.key-bar { display: inline-block; width: 10px; height: 12px; background: var(--pen); border-radius: 2px 2px 0 0; }
+.key-tick { display: inline-block; width: 16px; height: 0; border-top: 3px solid var(--fg); }
+.key-tick.forecast { border-top: 2px dotted var(--fg); }
+.month-nav { display: inline-flex; align-items: center; gap: .5rem; font-size: 13px; font-weight: 600; }
+.month-nav span { min-width: 8.5em; text-align: center; }
+.month-nav button:disabled { opacity: .4; cursor: default; }
+.hist .bar.fixed { fill: var(--muted); opacity: .5; }
+.key-bar.fixed { background: var(--muted); opacity: .5; }
+.seg button:disabled { opacity: .4; cursor: default; }

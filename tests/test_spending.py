@@ -159,7 +159,12 @@ def test_series_buckets_and_month_to_date(db):
 
         week = spending.series(s, env(s), bucket="week", days=14, now=NOW)
         assert all(datetime.fromisoformat(p["start"]).weekday() == 0 for p in week["points"])
-        assert week["label"] == "All spending" and week["budget"] == 100
+        # no setpoint for everything: budgets only cover some categories (Groceries has 999 unbudgeted here)
+        assert week["label"] == "All spending" and week["budget"] is None and week["mtd"]["status"] == "none"
+
+        everything = spending.series(s, env(s), bucket="month", days=0, now=NOW)
+        assert [p["start"] for p in everything["points"]] == ["2026-05-01", "2026-06-01"]  # from the first transaction
+        assert spending.series(s, env(s), bucket="day", days=0, now=NOW)["points"][0]["start"] == "2026-05-20"
 
         tag = spending.series(s, env(s), merchant=merchant_key("PIZZA HUT"), bucket="day", days=30, now=NOW)
         assert tag["label"] == "PIZZA HUT" and tag["device"] == "Dining" and tag["budget"] is None
@@ -289,3 +294,62 @@ def test_fixed_expenses_api(db):
     assert client.delete(f"/api/spending/expenses/{eid}").status_code == 204
     assert client.delete(f"/api/spending/expenses/{eid}").status_code == 404
     assert client.get("/api/spending/overview").json()["total"]["mtd"] == 0
+
+
+def test_expected_path_forecast_and_history(db):
+    def on(month, day):
+        return datetime(2026, month, day, 16, tzinfo=timezone.utc)
+
+    with db.session_scope() as s:
+        spending.seed_categories(s)
+        for m in (3, 4, 5):  # three complete months, 60 each: 30 on the 1st and 30 on the 20th
+            add(s, "PIZZA HUT", 30, on(m, 1))
+            add(s, "PIZZA HUT", 30, on(m, 20))
+        add(s, "PIZZA HUT", 999, on(5, 25), fraud=True)  # never part of "usual"
+        add(s, "PIZZA HUT", 10, on(6, 2))
+        spending.create_expense(s, env(s), {"name": "Rent", "amount": 100, "day_of_month": 20, "start_month": "2026-06"})
+
+    with db.session_scope() as s:
+        cur = spending.series(s, env(s), now=NOW)
+        m = cur["mtd"]
+        assert m["current"] and m["basis"] == ["2026-05", "2026-04", "2026-03"]
+        assert len(m["expected"]) == 30 and m["expected"][0] == 30 and m["expected"][-1] == 160  # 60 usual + rent
+        assert m["expected"][14] == 30  # by the 15th you've usually spent 30; rent isn't due yet
+        # forecast: today's actual + the rest of the usual path + the rent still to come
+        assert m["cumulative"][-1] == 10 and m["projected"] == 10 + 30 + 100
+        hist = {h["month"]: h for h in cur["history"]}
+        assert hist["2026-03"]["expected"] is None and hist["2026-03"]["actual"] == 60  # no history before March
+        assert hist["2026-02"]["actual"] == 0 and hist["2026-02"]["expected"] is None
+        assert hist["2026-04"]["expected"] == 60 and hist["2026-05"]["expected"] == 60
+        assert hist["2026-06"]["current"] and hist["2026-06"]["actual"] == 10 and hist["2026-06"]["projected"] == 140
+        assert list(hist)[-1] == "2026-06" and len(hist) == spending.HISTORY_MONTHS + 1
+
+        may = spending.series(s, env(s), month="2026-05", now=NOW)["mtd"]
+        assert not may["current"] and len(may["cumulative"]) == 31 and may["cumulative"][-1] == 60
+        assert may["projected"] is None and may["basis"] == ["2026-04", "2026-03"]
+        with pytest.raises(ValueError, match="hasn't happened"):
+            spending.series(s, env(s), month="2026-07", now=NOW)
+
+        ov = spending.overview(s, env(s), now=NOW)
+        assert ov["total"]["projected"] == 140 and ov["total"]["expected"] == 30
+        dining = device(ov, "Dining")
+        assert dining["projected"] == 40 and dining["expected"] == 30
+
+    client = TestClient(create_app(init=False))
+    assert client.get("/api/spending/series?month=2026-05").json()["mtd"]["month"] == "2026-05-01"
+    assert client.get("/api/spending/series?month=nope").status_code == 422
+
+
+def test_fixed_share_of_trend_points_and_budgeted_spend(db):
+    with db.session_scope() as s:
+        spending.seed_categories(s)
+        s.scalar(select(Category).where(Category.name == "Dining")).budget_monthly = 100
+        add(s, "PIZZA HUT", 40, datetime(2026, 6, 3, 16, tzinfo=timezone.utc))
+        add(s, "MYSTERY SHOP", 500, datetime(2026, 6, 3, 17, tzinfo=timezone.utc))  # uncategorised, unbudgeted
+        spending.create_expense(s, env(s), {"name": "Rent", "amount": 900, "day_of_month": 3, "start_month": "2026-06"})
+    with db.session_scope() as s:
+        day = spending.series(s, env(s), bucket="day", days=30, now=NOW)
+        p = next(p for p in day["points"] if p["start"] == "2026-06-03")
+        assert (p["value"], p["fixed"], p["count"]) == (1440, 900, 2)  # rent isn't a card transaction
+        t = spending.overview(s, env(s), now=NOW)["total"]
+        assert (t["mtd"], t["budget"], t["budgeted_mtd"]) == (1440, 100, 40)
