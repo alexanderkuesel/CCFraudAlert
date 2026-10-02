@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Spending{% endblock %}
+{% block content %}
+<div class="hist">
+  <div class="hist-head">
+    <div>
+      <h2 class="hist-title">Spend historian</h2>
+      <p class="muted hist-sub">Categories are <b>devices</b>, merchants are <b>tags</b>, spend is the tag value
+        (<span data-bind="currency"></span>). A category's monthly budget is its setpoint, with
+        <b>HI</b> at 80% and <b>HIHI</b> at 100% month to date. Transactions you marked as fraud are excluded.</p>
+    </div>
+    <div class="tabs" role="tablist">
+      <a role="tab" href="#trends" data-tab="trends" aria-selected="true">Trends</a>
+      <a role="tab" href="#manage" data-tab="manage" aria-selected="false">Categories &amp; tags</a>
+      <a role="tab" href="#fixed" data-tab="fixed" aria-selected="false">Fixed expenses</a>
+    </div>
+  </div>
+
+  <div class="kpis" id="hist-kpis"></div>
+
+  <section id="tab-trends" class="hist-trends">
+    <aside class="tag-browser card" aria-label="Tag browser">
+      <div class="tb-head"><b>Tag browser</b><span class="muted" data-bind="month-label"></span></div>
+      <div id="tb-tree" role="tree"></div>
+    </aside>
+    <div class="trend-panel">
+      <div class="card">
+        <div class="pen-head">
+          <div>
+            <div class="pen-path muted" id="pen-path"></div>
+            <h3 class="pen-title" id="pen-title">All spending</h3>
+          </div>
+          <div class="pen-controls">
+            <div class="seg" role="group" aria-label="Bucket">
+              <button type="button" data-bucket="day" aria-pressed="true">Day</button>
+              <button type="button" data-bucket="week" aria-pressed="false">Week</button>
+              <button type="button" data-bucket="month" aria-pressed="false">Month</button>
+            </div>
+            <div class="seg" role="group" aria-label="Range">
+              <button type="button" data-days="30" aria-pressed="false">30 d</button>
+              <button type="button" data-days="90" aria-pressed="true">90 d</button>
+              <button type="button" data-days="365" aria-pressed="false">1 y</button>
+            </div>
+          </div>
+        </div>
+        <div class="pen-move" id="pen-move" hidden>
+          <label for="move-select">Device (category) for this tag</label>
+          <select id="move-select"></select>
+        </div>
+        <div class="chart" id="chart-trend" role="img" aria-label="Spend trend"></div>
+        <div class="chart-tip" id="tip" hidden></div>
+      </div>
+      <div class="card">
+        <h3 class="chart-title">This month, running total <span class="muted" id="mtd-sub"></span></h3>
+        <div class="chart" id="chart-mtd" role="img" aria-label="Month to date running total against budget"></div>
+        <details class="table-view"><summary>Show as table</summary><div id="trend-table"></div></details>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-manage" hidden>
+    <div class="card">
+      <h3 style="margin-top:0">Categories (devices)</h3>
+      <p class="muted">Rename a category or set its monthly budget (leave empty for none). Deleting a category moves its
+        merchants to <i>Uncategorized</i>.</p>
+      <div class="table-wrap"><table id="cat-table">
+        <thead><tr><th>Name</th><th>Monthly budget (<span data-bind="currency"></span>)</th><th style="text-align:right">This month</th>
+          <th style="text-align:right">Merchants</th><th></th></tr></thead><tbody></tbody></table></div>
+      <form id="cat-add" class="cat-add">
+        <input name="name" placeholder="New category, e.g. Kids" aria-label="New category name" required maxlength="64">
+        <input name="budget" placeholder="Budget (optional)" aria-label="Monthly budget" inputmode="decimal">
+        <button class="btn">Add category</button>
+      </form>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Tags (merchants)</h3>
+      <p class="muted">Merchants are placed in a category automatically from their name (<i>auto</i>). Anything you change is
+        yours (<i>you</i>) and is never overwritten.</p>
+      <div class="toolbar">
+        <input type="search" id="tag-search" placeholder="Filter merchants" aria-label="Filter merchants">
+        <select id="tag-filter" aria-label="Show category"><option value="">All categories</option></select>
+        <span class="muted" id="tag-count"></span>
+        <span class="bulk-move">Move selected to <select id="bulk-target" aria-label="Move selected merchants to"></select>
+          <button type="button" class="btn btn-sm" id="bulk-move">Move</button></span>
+      </div>
+      <div class="table-wrap"><table id="tag-table">
+        <thead><tr><th class="sel"><input type="checkbox" id="tag-all" aria-label="Select all shown merchants"></th>
+          <th>Merchant</th><th>Category</th><th>Set by</th><th style="text-align:right">This month</th>
+          <th style="text-align:right">6 months</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+  <section id="tab-fixed" hidden>
+    <div class="card">
+      <h3 style="margin-top:0">Fixed expenses</h3>
+      <p class="muted">Monthly costs that never reach your card: rent, school fees, transfers, cash. Each one is booked on
+        its day every month from <i>From</i> through <i>Until</i> (leave empty to keep going), and shows up as a
+        <b>tag</b> in its category, counting toward that category's budget. To record a price change, set
+        <i>Until</i> on the old row and add a new one, so earlier months keep the old amount.</p>
+      <div class="table-wrap"><table id="fx-table">
+        <thead><tr><th>Name</th><th>Amount</th><th>Currency</th><th>Category</th><th>Day</th><th>From</th><th>Until</th>
+          <th>Note</th><th style="text-align:right">Monthly (<span data-bind="currency"></span>)</th><th></th></tr></thead>
+        <tbody></tbody>
+        <tfoot><tr class="fx-new">
+          <td><input name="name" placeholder="e.g. Rent" aria-label="New expense name" maxlength="128"></td>
+          <td><input name="amount" placeholder="0.00" aria-label="Amount" inputmode="decimal"></td>
+          <td><input name="currency" aria-label="Currency" maxlength="3" class="fx-cur"></td>
+          <td><select name="category_id" aria-label="Category"></select></td>
+          <td><input name="day_of_month" type="number" min="1" max="31" value="1" aria-label="Day of month" class="fx-day"></td>
+          <td><input name="start_month" type="month" aria-label="From month"></td>
+          <td><input name="end_month" type="month" aria-label="Until month (optional)"></td>
+          <td><input name="note" placeholder="optional" aria-label="Note"></td>
+          <td></td>
+          <td><button type="button" class="btn btn-sm" id="fx-add">Add</button></td>
+        </tr></tfoot></table></div>
+      <p class="muted" id="fx-total"></p>
+    </div>
+  </section>
+  <div class="flash" id="hist-msg" hidden></div>
+</div>
+<script src="{{ url_for('static', path='spending.js') }}"></script>
+{% endblock %}

@@ -255,6 +255,145 @@ def create_app(init: bool = True) -> FastAPI:
             env = pipeline.Env.load(s, get_settings())
             return build_network(s, env, NETWORK_RANGES[days])
 
+    # ---- spend historian ----
+
+    @app.get("/spending")
+    def spending_page(request: Request):
+        return templates.TemplateResponse(request, "spending.html", {})
+
+    @app.get("/api/spending/overview")
+    def api_spending_overview():
+        from fraudalert import spending
+
+        with session_scope() as s:
+            return spending.overview(s, pipeline.Env.load(s, get_settings()))
+
+    @app.get("/api/spending/series")
+    def api_spending_series(category: str | None = None, merchant: str | None = None,
+                            bucket: str = "day", days: int = 90):
+        from fraudalert import spending
+
+        if category not in (None, "", "uncategorized") and not str(category).isdigit():
+            raise HTTPException(422, "category must be an id or 'uncategorized'")
+        try:
+            with session_scope() as s:
+                return spending.series(s, pipeline.Env.load(s, get_settings()), category=category or None,
+                                       merchant=merchant or None, bucket=bucket, days=max(7, min(days, 730)))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    class CategoryIn(BaseModel):
+        name: str | None = None
+        budget: str | float | None = None
+
+    @app.post("/api/spending/categories", status_code=201)
+    def api_create_category(body: CategoryIn):
+        from fraudalert import spending
+
+        try:
+            with session_scope() as s:
+                c = spending.create_category(s, body.name or "", body.budget)
+                return {"id": c.id, "name": c.name}
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.patch("/api/spending/categories/{category_id}")
+    def api_update_category(category_id: int, body: CategoryIn):
+        from fraudalert import spending
+
+        changes = body.model_dump(exclude_unset=True)
+        try:
+            with session_scope() as s:
+                c = spending.update_category(s, category_id, name=changes.get("name"),
+                                             budget=changes["budget"] if "budget" in changes else "__keep__")
+                return {"id": c.id, "name": c.name, "budget": float(c.budget_monthly) if c.budget_monthly is not None else None}
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.delete("/api/spending/categories/{category_id}")
+    def api_delete_category(category_id: int):
+        from fraudalert import spending
+
+        try:
+            with session_scope() as s:
+                return {"uncategorized": spending.delete_category(s, category_id)}
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    class ExpenseIn(BaseModel):
+        name: str | None = None
+        amount: str | float | None = None
+        currency: str | None = None
+        category_id: int | str | None = None
+        day_of_month: int | str | None = None
+        start_month: str | None = None
+        end_month: str | None = None
+        note: str | None = None
+
+    @app.get("/api/spending/expenses")
+    def api_list_expenses():
+        from fraudalert import spending
+
+        with session_scope() as s:
+            return spending.list_expenses(s, pipeline.Env.load(s, get_settings()))
+
+    @app.post("/api/spending/expenses", status_code=201)
+    def api_create_expense(body: ExpenseIn):
+        from fraudalert import spending
+
+        try:
+            with session_scope() as s:
+                e = spending.create_expense(s, pipeline.Env.load(s, get_settings()), body.model_dump(exclude_unset=True))
+                return {"id": e.id, "key": f"{spending.MANUAL}{e.id}", "name": e.name}
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.patch("/api/spending/expenses/{expense_id}")
+    def api_update_expense(expense_id: int, body: ExpenseIn):
+        from fraudalert import spending
+
+        try:
+            with session_scope() as s:
+                e = spending.update_expense(s, pipeline.Env.load(s, get_settings()), expense_id,
+                                            body.model_dump(exclude_unset=True))
+                return {"id": e.id, "name": e.name}
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.delete("/api/spending/expenses/{expense_id}", status_code=204)
+    def api_delete_expense(expense_id: int):
+        from fraudalert import spending
+
+        try:
+            with session_scope() as s:
+                spending.delete_expense(s, expense_id)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    class AssignIn(BaseModel):
+        keys: list[str]
+        category_id: int | None = None
+
+    @app.post("/api/spending/assign")
+    def api_assign(body: AssignIn):
+        from fraudalert import spending
+
+        if not body.keys:
+            raise HTTPException(422, "no merchants given")
+        try:
+            with session_scope() as s:
+                return {"assigned": spending.assign(s, body.keys, body.category_id)}
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
     @app.get("/rules")
     def rules_page(request: Request):
         with session_scope() as s:

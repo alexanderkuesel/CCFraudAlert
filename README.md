@@ -184,6 +184,41 @@ total spend) as a graph, so unusual patterns stand out at a glance:
 * Typical things to look for: a card test (a **1** at a new merchant) followed by another **1** on the same
   card, a new foreign merchant hanging off one card, or a merchant only one card has ever used with a large total.
 
+## Spend historian (budget tracking)
+
+Since every card transaction already lands here, the **Spending** page turns it into a SCADA-style
+*historian* for your budget:
+
+| SCADA | Here |
+|---|---|
+| Device | **Category** (Groceries, Dining, Transport, ...) |
+| Tag | **Merchant** (one tag per business) |
+| Tag value | **Spend** in your home currency (other currencies converted) |
+| Setpoint | The category's optional **monthly budget** |
+| HI / HIHI limit | **80% / 100%** of that budget, month to date |
+
+* **Tag browser:** every category with a moving-bar indicator (fill = month to date against the budget,
+  ticks at HI and the setpoint), a **HI**/**HIHI** badge when a limit is reached, and a 6-month
+  sparkline. Expand a category to see its merchants with their month-to-date spend and count.
+* **Trend:** pick anything in the browser (everything, a category, or one merchant) to trend it by
+  **day, week or month** over 30 days, 90 days or a year. On the month view, HI and HIHI limit lines are
+  drawn, and months over a limit are coloured. Below it, **this month's running total** is plotted
+  against the budget, with a projection to month end (from day 7, so the first few days don't give
+  wild numbers). Every chart has hover tooltips and a table view.
+* **Categories & tags:** add, rename or delete categories and set or clear their budgets. Merchants are
+  categorised automatically from their names the first time they're seen (*auto*). Move a merchant
+  from its row, from the trend view, or select several and move them together. What you set is
+  marked *you* and never overwritten. Deleting a category moves its merchants to *Uncategorized*.
+* **Fixed expenses:** for monthly costs that never reach your card (rent, school fees, transfers,
+  cash), add a row on the *Fixed expenses* tab with its amount, currency, category, day of the month and
+  the months it applies to (*Until* is optional). Each one is booked on that day every month (the last
+  day in shorter months) and shows up as its own tag, marked *fixed*, counting toward its category's
+  budget. Nothing is booked in the future, but the month-end projection adds this month's fixed
+  expenses at face value and paces only your card spending, so rent on the 1st doesn't inflate it. For
+  a price change, set *Until* on the old row and add a new one, so past months keep the old amount.
+* In keeping with ISA-101, everything is grey until a budget limit is reached. Transactions you
+  acknowledged as **fraud** don't count as spending, and nor do zero-amount card tests.
+
 ## Daily report email
 
 Once a day at the time you choose (default **20:00** in `FRAUDALERT_TIMEZONE`), the worker emails a
