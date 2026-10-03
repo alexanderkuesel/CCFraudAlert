@@ -72,7 +72,7 @@ def test_reasons_stored_for_notable_scores_and_shown(db, tmp_path):
         merchant, reason = with_reason.merchant, with_reason.anomaly_reasons[0]["text"]
         with_reason.flagged = True  # make it show in the alarm views
     client = TestClient(create_app(init=False))
-    html = client.get("/?view=alarms").text  # it's flagged above; the journal pages 50 rows at a time
+    html = client.get("/alarms?view=alarms").text  # it's flagged above; the journal pages 50 rows at a time
     assert "Why unusual:" in html and reason in html
     api = {t["merchant"]: t for t in client.get("/api/transactions?limit=1000").json() if t["anomaly_reasons"]}
     assert merchant in api

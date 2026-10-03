@@ -1,58 +1,37 @@
-# CC Transaction Alarm Dashboard
+# Finance Trends & Alarms
 
-A **passive**, SCADA-style alarm dashboard for your credit-card transactions.
+A self-hosted **personal finance dashboard** built from the transaction alert emails your bank already
+sends you, with **fraud alarms** built in.
 
-It reads the transaction alert emails your bank already sends you, stores each transaction in PostgreSQL,
-and raises **alarms** when a transaction looks wrong. You then acknowledge each alarm as legit or fraud,
-the way an operator works an alarm list in a control room.
+It reads those emails (read-only), stores every transaction in PostgreSQL, and turns them into:
 
-> **Passive by design.** The dashboard only *observes*: it reads your mailbox read-only (it never
-> marks, moves or sends mail), and it never blocks a card, contacts your bank or moves money. Acting on
-> an alarm (calling the bank, freezing the card) is always your decision. It is also **not real-time**:
-> it sees a transaction only once the bank's email arrives and the next inbox sync runs (every 5
-> minutes by default).
+* **An overview** (the home page): what you've spent this month against your usual month, a month-end
+  forecast, categories against their budgets, the last 12 months, top merchants, recent transactions,
+  and anything that needs a look.
+* **Spending trends**: every category and merchant as a trend you can chart by day, week or month, over
+  years of history; budgets with near/over-limit warnings; fixed monthly expenses that never reach your
+  card (rent, transfers); and actual-vs-expected comparisons for every month.
+* **Alarms**: charges that look like fraud (card tests, large or foreign purchases, anything the anomaly
+  model finds unusual) are raised as prioritised alarms for you to review, plus an optional daily report
+  email with what to quote when you call your bank.
 
-## Inspired by SCADA alarm management
+It looks and behaves like a **SCADA operator screen**: the screens follow **ISA-101** (grey and quiet while
+everything is normal, colour reserved for abnormal conditions such as alarms and budgets at their HI/HIHI
+limits), alarms follow **ISA-18.2** (priorities, acknowledgement, journal), and spending is modelled like a
+plant historian (categories are devices, merchants are tags, budgets are setpoints).
 
-Industrial control rooms have spent decades learning how to alert a human without drowning them in
-noise. This project deliberately borrows that discipline and applies it to card transactions:
-
-* **ISA-18.2 (alarm management)** defines what an alarm is, its lifecycle and its priorities.
-* **ISA-101 (HMI design)** defines the "high-performance HMI" look: grey and quiet when things are
-  normal, with colour reserved for abnormal conditions, so an alarm stands out the moment it appears.
-
-(ISA-95, often mentioned alongside these, covers integrating business and control systems; it doesn't
-define alarm handling, so the alarm behaviour here follows ISA-18.2.)
-
-| ISA-18.2 / SCADA concept | In this dashboard |
-|---|---|
-| Process event | A card transaction parsed from a bank alert email |
-| Alarm | A rule matching a transaction (see **Alarm rules**) |
-| Alarm priority | **1 High** (act now), **2 Medium** (check today), **3 Low** (review when convenient); shown by colour, shape *and* number (red square, amber triangle, slate diamond) |
-| Unacknowledged alarm | Flashes in the alarm summary and counts in the banner at the top of every page |
-| Acknowledge | **Ack · Legit** / **Ack · Fraud**: your review. The disposition is kept, and doubles as a training label for the anomaly model |
-| Latched alarm | Transactions are discrete events, so there is no "return to normal": an alarm stays active until you acknowledge it |
-| Alarm summary / journal | **Alarm summary** page: *Unacknowledged* (default), *All alarms*, and *Journal* (every transaction) |
-| Rationalization | Each rule carries a rationale (why it exists) and a priority. Keep High rare so it keeps its meaning |
-| Alarm system KPIs | Alarm rate per day, and priority mix vs. the ISA-18.2 guideline of roughly 5% High / 15% Medium / 80% Low |
-
-Built-in alarms:
-
-* **Card test (zero/near-zero amount)** (High): a `$0.00`-style authorisation. Fraudsters verify a
-  stolen card this way right before using it.
-* **Charge after a card test** (High): a real charge on the same card within 48 hours of a test-sized one.
-* **Large or foreign purchase** (Medium): over 100 in your home currency, made abroad, or in a currency
-  you don't normally use.
-
-Existing installs receive new built-in alarms automatically on upgrade (once; if you delete one, it stays deleted).
+> **Passive by design.** It only *observes*: it reads your mailbox read-only (it never marks, moves or
+> sends mail), and it never blocks a card, contacts your bank or moves money. Acting on an alarm (calling
+> the bank, freezing the card) is always your decision. It is also **not real-time**: it sees a
+> transaction once the bank's email arrives and the next inbox sync runs (every 5 minutes by default).
 
 ```
- IMAP inbox ──► parse email ──► transaction ──► features ──► anomaly score ──► alarm rules ──► alarm summary
- (read-only)     (parsers.py)   (PostgreSQL)   (features.py)  (anomaly/*.py)   (engine.py)     (UI + webhook)
+ IMAP inbox ──► parse email ──► transaction ──► categories, budgets, trends ──► overview & spending
+ (read-only)     (parsers.py)   (PostgreSQL)  └► features ──► anomaly score ──► alarm rules ──► alarms (UI, report, webhook)
 ```
 
-The internal names (`fraudalert` package and CLI, `FRAUDALERT_*` settings) are unchanged so existing
-installs keep working.
+The project started as *CC Transaction Alarm Dashboard*. The internal names (the `fraudalert` package and
+CLI, `FRAUDALERT_*` settings) are unchanged, so existing installs keep working.
 
 ## Quick start (Docker)
 
@@ -129,6 +108,84 @@ docker compose exec worker fraudalert backfill --since 3y --folder "[Gmail]/All 
   * **The bank's sender address changed** over the years: add the old address to `FRAUDALERT_SENDER_FILTER`.
 * If your bank changed its email layout over the years, older emails may not parse. They're kept on the
   **Emails** page; `fraudalert reevaluate --reparse` retries them after a parser update.
+
+## Spending: trends, budgets and fixed expenses
+
+Since every card transaction already lands here, the **Spending** page turns it into a SCADA-style
+*historian* for your budget:
+
+| SCADA | Here |
+|---|---|
+| Device | **Category** (Groceries, Dining, Transport, ...) |
+| Tag | **Merchant** (one tag per business) |
+| Tag value | **Spend** in your home currency (other currencies converted) |
+| Setpoint | The category's optional **monthly budget** |
+| HI / HIHI limit | **80% / 100%** of that budget, month to date |
+
+* **Tag browser:** every category with a moving-bar indicator (fill = month to date against the budget,
+  ticks at HI and the setpoint), a **HI**/**HIHI** badge when a limit is reached, and a 6-month
+  sparkline. Expand a category to see its merchants with their month-to-date spend and count.
+* **Trend:** pick anything in the browser (everything, a category, or one merchant) to trend it by
+  **day, week or month** over 30 days, 90 days, a year, or everything on record (months need at least a year). Fixed expenses show as a lighter segment on top of card spending. For a category, the month view draws its HI and HIHI
+  limit lines and colours months over a limit. *All spending* has no budget line, because budgets only
+  cover some categories (the *Spent this month* tile compares the budgeted categories with their budgets). Every chart has hover tooltips and a table view.
+* **Actual vs expected** (setpoint trajectory against process value): the running total for a month
+  is plotted against an **expected** curve, which is how your card spending usually builds up through a
+  month (the average of the previous 3 complete months, stretched to the month's length) plus that
+  month's fixed expenses on their due days. Step back with ‹ › to see how any past month tracked its
+  expectation. For the current month, the **forecast** continues from today's actual along the
+  expected path. Until there's a complete month on record, it falls back to a straight line from day 7.
+* **Expected vs actual, by month:** a bar for what you spent and a tick for what was expected for each
+  of the last 6 months (this month shows the forecast too), labelled with the difference in %. Click a
+  month to open its running total. Your first partial month of email history is never used as "usual".
+* **Categories & tags:** add, rename or delete categories and set or clear their budgets. Merchants are
+  categorised automatically from their names the first time they're seen (*auto*). Move a merchant
+  from its row, from the trend view, or select several and move them together. What you set is
+  marked *you* and never overwritten. Deleting a category moves its merchants to *Uncategorized*.
+* **Fixed expenses:** for monthly costs that never reach your card (rent, school fees, transfers,
+  cash), add a row on the *Fixed expenses* tab with its amount, currency, category, day of the month and
+  the months it applies to (*Until* is optional). Each one is booked on that day every month (the last
+  day in shorter months) and shows up as its own tag, marked *fixed*, counting toward its category's
+  budget. Nothing is booked in the future, but the month-end projection adds this month's fixed
+  expenses at face value and paces only your card spending, so rent on the 1st doesn't inflate it. For
+  a price change, set *Until* on the old row and add a new one, so past months keep the old amount.
+* In keeping with ISA-101, everything is grey until a budget limit is reached. Transactions you
+  acknowledged as **fraud** don't count as spending, and nor do zero-amount card tests.
+
+## Alarms: fraud monitoring, SCADA style
+
+Industrial control rooms have spent decades learning how to alert a human without drowning them in
+noise. This project deliberately borrows that discipline and applies it to card transactions:
+
+* **ISA-18.2 (alarm management)** defines what an alarm is, its lifecycle and its priorities.
+* **ISA-101 (HMI design)** defines the "high-performance HMI" look: grey and quiet when things are
+  normal, with colour reserved for abnormal conditions, so an alarm stands out the moment it appears.
+
+(ISA-95, often mentioned alongside these, covers integrating business and control systems; it doesn't
+define alarm handling, so the alarm behaviour here follows ISA-18.2.)
+
+| ISA-18.2 / SCADA concept | In this dashboard |
+|---|---|
+| Process event | A card transaction parsed from a bank alert email |
+| Alarm | A rule matching a transaction (see **Alarm rules**) |
+| Alarm priority | **1 High** (act now), **2 Medium** (check today), **3 Low** (review when convenient); shown by colour, shape *and* number (red square, amber triangle, slate diamond) |
+| Unacknowledged alarm | Flashes on the **Alarms** page and counts on the *Alarms* menu item and the overview |
+| Acknowledge | **Ack · Legit** / **Ack · Fraud**: your review. The disposition is kept, and doubles as a training label for the anomaly model |
+| Latched alarm | Transactions are discrete events, so there is no "return to normal": an alarm stays active until you acknowledge it |
+| Alarm summary / journal | **Alarms** page (`/alarms`): *Unacknowledged* (default), *All alarms*, and *Journal* (every transaction) |
+| Rationalization | Each rule carries a rationale (why it exists) and a priority. Keep High rare so it keeps its meaning |
+| Alarm system KPIs | Alarm rate per day, and priority mix vs. the ISA-18.2 guideline of roughly 5% High / 15% Medium / 80% Low |
+
+Built-in alarms:
+
+* **Card test (zero/near-zero amount)** (High): a `$0.00`-style authorisation. Fraudsters verify a
+  stolen card this way right before using it.
+* **Charge after a card test** (High): a real charge on the same card within 48 hours of a test-sized one.
+* **Large or foreign purchase** (Medium): over 100 in your home currency, made abroad, or in a currency
+  you don't normally use.
+
+Existing installs receive new built-in alarms automatically on upgrade (once; if you delete one, it stays deleted).
+
 
 ## Alarm rules
 
@@ -216,49 +273,6 @@ total spend) as a graph, so unusual patterns stand out at a glance:
 * **Highlight anomalies** fades everything normal, leaving flagged, new and foreign merchants.
 * Typical things to look for: a card test (a **1** at a new merchant) followed by another **1** on the same
   card, a new foreign merchant hanging off one card, or a merchant only one card has ever used with a large total.
-
-## Spend historian (budget tracking)
-
-Since every card transaction already lands here, the **Spending** page turns it into a SCADA-style
-*historian* for your budget:
-
-| SCADA | Here |
-|---|---|
-| Device | **Category** (Groceries, Dining, Transport, ...) |
-| Tag | **Merchant** (one tag per business) |
-| Tag value | **Spend** in your home currency (other currencies converted) |
-| Setpoint | The category's optional **monthly budget** |
-| HI / HIHI limit | **80% / 100%** of that budget, month to date |
-
-* **Tag browser:** every category with a moving-bar indicator (fill = month to date against the budget,
-  ticks at HI and the setpoint), a **HI**/**HIHI** badge when a limit is reached, and a 6-month
-  sparkline. Expand a category to see its merchants with their month-to-date spend and count.
-* **Trend:** pick anything in the browser (everything, a category, or one merchant) to trend it by
-  **day, week or month** over 30 days, 90 days, a year, or everything on record (months need at least a year). Fixed expenses show as a lighter segment on top of card spending. For a category, the month view draws its HI and HIHI
-  limit lines and colours months over a limit. *All spending* has no budget line, because budgets only
-  cover some categories (the *Spent this month* tile compares the budgeted categories with their budgets). Every chart has hover tooltips and a table view.
-* **Actual vs expected** (setpoint trajectory against process value): the running total for a month
-  is plotted against an **expected** curve, which is how your card spending usually builds up through a
-  month (the average of the previous 3 complete months, stretched to the month's length) plus that
-  month's fixed expenses on their due days. Step back with ‹ › to see how any past month tracked its
-  expectation. For the current month, the **forecast** continues from today's actual along the
-  expected path. Until there's a complete month on record, it falls back to a straight line from day 7.
-* **Expected vs actual, by month:** a bar for what you spent and a tick for what was expected for each
-  of the last 6 months (this month shows the forecast too), labelled with the difference in %. Click a
-  month to open its running total. Your first partial month of email history is never used as "usual".
-* **Categories & tags:** add, rename or delete categories and set or clear their budgets. Merchants are
-  categorised automatically from their names the first time they're seen (*auto*). Move a merchant
-  from its row, from the trend view, or select several and move them together. What you set is
-  marked *you* and never overwritten. Deleting a category moves its merchants to *Uncategorized*.
-* **Fixed expenses:** for monthly costs that never reach your card (rent, school fees, transfers,
-  cash), add a row on the *Fixed expenses* tab with its amount, currency, category, day of the month and
-  the months it applies to (*Until* is optional). Each one is booked on that day every month (the last
-  day in shorter months) and shows up as its own tag, marked *fixed*, counting toward its category's
-  budget. Nothing is booked in the future, but the month-end projection adds this month's fixed
-  expenses at face value and paces only your card spending, so rent on the 1st doesn't inflate it. For
-  a price change, set *Until* on the old row and add a new one, so past months keep the old amount.
-* In keeping with ISA-101, everything is grey until a budget limit is reached. Transactions you
-  acknowledged as **fraud** don't count as spending, and nor do zero-amount card tests.
 
 ## Daily report email
 

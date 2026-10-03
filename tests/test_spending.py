@@ -184,7 +184,7 @@ def test_spending_api(db):
         add(s, "MYSTERY SHOP", 8, datetime.now(timezone.utc) - timedelta(hours=1))
     client = TestClient(create_app(init=False))
     page = client.get("/spending")
-    assert page.status_code == 200 and "Spend historian" in page.text and "spending.js" in page.text
+    assert page.status_code == 200 and "<h1 class=\"hist-title\">Spending</h1>" in page.text and "spending.js" in page.text
 
     ov = client.get("/api/spending/overview").json()
     assert device(ov, "Dining")["mtd"] == 12 and device(ov, spending.UNCATEGORIZED)["mtd"] == 8

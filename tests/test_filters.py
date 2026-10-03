@@ -79,7 +79,7 @@ def test_bad_input_is_reported_not_crashing(data):
     assert f.view == "unack" and f.amount_min is None and f.date_from is None and not f.pri and not f.state
     assert f.errors == ["From must be a date (YYYY-MM-DD)", "Min amount must be a number"]
     client = TestClient(create_app(init=False))
-    r = client.get("/?view=journal&amin=lots")
+    r = client.get("/alarms?view=journal&amin=lots")
     assert r.status_code == 200 and "Min amount must be a number" in r.text
 
 
@@ -95,7 +95,7 @@ def test_query_string_round_trip_and_chips(data):
 
 def test_page_filters_and_bulk_edit(data):
     client = TestClient(create_app(init=False))
-    html = client.get("/?view=journal&card=2222").text
+    html = client.get("/alarms?view=journal&card=2222").text
     assert 'aria-label="Select HOTEL"' in html and 'aria-label="Select SODA"' in html
     assert 'aria-label="Select NETFLIX"' not in html
     assert "Card …2222" in html and "2 matches" in html
@@ -115,7 +115,7 @@ def test_page_filters_and_bulk_edit(data):
     # comment + clear, and the redirect keeps the filters
     r = client.post("/transactions/bulk", data={"action": "comment", "comment": " reviewed Oct ", "ids": netflix,
                                                 "filters": "view=journal&q=netflix"}, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"].startswith("/?view=journal&q=netflix")
+    assert r.status_code == 303 and r.headers["location"].startswith("/alarms?view=journal&q=netflix")
     r = client.post("/transactions/bulk", data={"action": "clear", "ids": netflix, "filters": ""})
     assert "Cleared the acknowledgement on 2 transactions." in r.text
     rows = [t for t in client.get("/api/transactions").json() if t["merchant"] == "NETFLIX"]

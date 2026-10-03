@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="fraudalert", description="Credit card fraud alert pipeline")
+    parser = argparse.ArgumentParser(prog="fraudalert", description="Finance Trends & Alarms: personal finance dashboard and passive fraud alarms from bank alert emails")
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="cmd", required=True)
 

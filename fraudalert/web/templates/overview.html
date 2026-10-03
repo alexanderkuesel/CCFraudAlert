@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+<div class="ov">
+  <div class="page-head">
+    <div>
+      <h1>Overview</h1>
+      <p class="muted"><span data-bind="month-label"></span>{% if last_sync %} · inbox synced {{ last_sync }}{% endif %}</p>
+    </div>
+    <a class="btn" href="/spending">Explore spending →</a>
+  </div>
+
+  {% if not has_data %}
+  <div class="card empty-state">
+    <h3>No transactions yet</h3>
+    <p class="muted">Set your inbox details in <code>.env</code> and press <b>Sync inbox</b>, or pull in years of history with
+      <code>fraudalert backfill --since 3y</code>. Your spending, trends and alarms will show up here.</p>
+  </div>
+  {% endif %}
+
+  <section class="kpis ov-kpis" id="ov-kpis" aria-label="This month at a glance">
+    <a class="kpi kpi-link kpi-alarms {{ ('has-alarms top-p' ~ (1 if alarm_counts[1] else 2 if alarm_counts[2] else 3)) if alarm_counts.values()|sum }}" href="/alarms?view=unack">
+      <span>Alarms to review</span>
+      {% set total = alarm_counts.values()|sum %}
+      <b>{{ total }}</b>
+      <small>{% if total %}{% for rank in (1, 2, 3) if alarm_counts[rank] %}{{ alarm_counts[rank] }} {{ PRIORITY_NAME[rank]|lower }}{{ ' · ' if not loop.last }}{% endfor %}{% else %}all clear{% endif %}</small>
+    </a>
+  </section>
+
+  <div class="ov-grid">
+    <section class="card ov-wide" aria-labelledby="ov-month-h">
+      <div class="card-head">
+        <h2 id="ov-month-h">This month</h2>
+        <a href="/spending" class="muted-link">Details →</a>
+      </div>
+      <p class="muted chart-sub" id="ov-month-sub"></p>
+      <ul class="chart-legend" aria-label="Legend">
+        <li><span class="key-line actual"></span>Actual</li>
+        <li><span class="key-line expected"></span>Expected <span class="muted" id="ov-basis"></span></li>
+        <li id="ov-key-forecast"><span class="key-line forecast"></span>Forecast</li>
+      </ul>
+      <div class="chart" id="ov-month" role="img" aria-label="Running total this month: actual against expected"></div>
+      <details class="table-view"><summary>Show as table</summary><div id="ov-month-table"></div></details>
+    </section>
+
+    <section class="card" aria-labelledby="ov-cat-h">
+      <div class="card-head">
+        <h2 id="ov-cat-h">Categories</h2>
+        <a href="/spending#manage" class="muted-link">Budgets →</a>
+      </div>
+      <ul class="cat-list" id="ov-cats"></ul>
+    </section>
+
+    <section class="card ov-wide" aria-labelledby="ov-year-h">
+      <div class="card-head">
+        <h2 id="ov-year-h">Last 12 months</h2>
+        <a href="/spending" class="muted-link">Trends →</a>
+      </div>
+      <ul class="chart-legend" id="ov-year-legend" aria-label="Legend" hidden>
+        <li><span class="key-bar"></span>Card spending</li>
+        <li><span class="key-bar fixed"></span>Fixed expenses</li>
+      </ul>
+      <div class="chart" id="ov-year" role="img" aria-label="Spending per month over the last year"></div>
+      <details class="table-view"><summary>Show as table</summary><div id="ov-year-table"></div></details>
+    </section>
+
+    <section class="card" aria-labelledby="ov-top-h">
+      <div class="card-head">
+        <h2 id="ov-top-h">Top merchants this month</h2>
+      </div>
+      <ol class="top-list" id="ov-top"></ol>
+    </section>
+
+    <section class="card ov-wide" aria-labelledby="ov-recent-h">
+      <div class="card-head">
+        <h2 id="ov-recent-h">Recent transactions</h2>
+        <a href="/alarms?view=journal" class="muted-link">All transactions →</a>
+      </div>
+      {% if recent %}
+      <div class="table-wrap"><table class="recent">
+        <thead><tr><th>When</th><th>Merchant</th><th class="col-cat">Category</th><th style="text-align:right">Amount</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for t in recent %}
+          <tr>
+            <td class="nowrap muted">{{ t.when }}</td>
+            <td>{{ t.merchant }}</td>
+            <td class="muted col-cat">{{ t.category }}</td>
+            <td class="num">{{ '{:,.2f}'.format(t.amount) }} {{ t.currency }}
+              {% if t.currency != currency %}<div class="muted small">≈ {{ '{:,.2f}'.format(t.home) }} {{ currency }}</div>{% endif %}</td>
+            <td class="nowrap">
+              {% if t.state == 'unack' %}<a class="status-pill alarm p{{ t.priority }}" href="/alarms?view=unack"><span class="pri pri-sm pri-{{ t.priority }}" aria-hidden="true">{{ t.priority }}</span>Alarm</a>
+              {% elif t.state == 'fraud' %}<span class="badge badge-fraud">Fraud</span>
+              {% elif t.state == 'legit' %}<span class="status-pill">Reviewed</span>
+              {% else %}<span class="status-pill ok">OK</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% else %}<p class="muted">Nothing yet.</p>{% endif %}
+    </section>
+
+    <section class="card ov-alarms" aria-labelledby="ov-alarms-h">
+      <div class="card-head">
+        <h2 id="ov-alarms-h">Alarms <span class="passive-tag" title="Alarms are passive: nothing is blocked, reported or paid automatically.">Passive</span></h2>
+        <a href="/alarms" class="muted-link">Open →</a>
+      </div>
+      {% if alarms %}
+        <ul class="alarm-list">
+        {% for t in alarms %}
+          <li>
+            <span class="pri pri-{{ t.priority }}" aria-label="{{ PRIORITY_NAME[t.priority] }} priority">{{ t.priority }}</span>
+            <span class="al-main"><b>{{ t.merchant }}</b><span class="muted small">{{ t.reason }} · {{ t.when }}</span></span>
+            <span class="num">{{ '{:,.2f}'.format(t.amount) }} {{ t.currency }}</span>
+          </li>
+        {% endfor %}
+        </ul>
+        <a class="btn btn-block" href="/alarms?view=unack">Review {{ alarm_counts.values()|sum }} alarm{{ 's' if alarm_counts.values()|sum != 1 }}</a>
+      {% else %}
+        <p class="all-clear-note"><span class="ok-dot" aria-hidden="true"></span><b>All clear.</b>
+          <span class="muted">Nothing unusual needs your attention.</span></p>
+      {% endif %}
+    </section>
+  </div>
+  <div class="flash" id="ov-msg" hidden></div>
+</div>
+<script src="{{ asset('charts.js') }}"></script>
+<script src="{{ asset('overview.js') }}"></script>
+{% endblock %}

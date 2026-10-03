@@ -20,7 +20,7 @@ from fraudalert import pipeline, prefs
 from fraudalert.config import get_settings
 from fraudalert.db import init_db, session_scope
 from fraudalert.models import Alert, RawEmail, Rule, SyncState, Transaction
-from fraudalert.web.filters import PRIORITIES, PRIORITY_RANK, STATES, VIEWS, Filters, txn_priority
+from fraudalert.web.filters import PRIORITIES, PRIORITY_RANK, STATES, VIEWS, Filters, txn_priority, txn_state
 from fraudalert.rules.engine import FIELDS, OPS, RuleError, RuleSpec, describe, validate_rule
 
 HERE = Path(__file__).parent
@@ -37,7 +37,7 @@ def _asset_url(path: str) -> str:
     return f"/static/{path}?v={_asset_version(path)}"
 PAGE_SIZE = 50
 SEVERITIES = ["high", "medium", "low"]
-APP_NAME = "CC Transaction Alarm Dashboard"
+APP_NAME = "Finance Trends & Alarms"
 COMMENT_MAX = 1000
 NETWORK_RANGES = {"30": 30, "90": 90, "365": 365, "all": None}
 
@@ -171,6 +171,41 @@ def create_app(init: bool = True) -> FastAPI:
     # ---------- HTML ----------
 
     @app.get("/")
+    def overview_page(request: Request):
+        """The personal-finance overview: this month against your usual month, categories, the last
+        year, recent transactions, and the alarms that need you."""
+        if any(k not in ("msg", "error") for k in request.query_params):
+            # links from before the alarm summary moved (old bookmarks, daily report emails)
+            return RedirectResponse("/alarms?" + str(request.query_params), status_code=307)
+        from fraudalert import spending
+
+        settings = get_settings()
+        with session_scope() as s:
+            env = pipeline.Env.load(s, settings)
+            recent = s.scalars(select(Transaction).options(selectinload(Transaction.alerts))
+                               .order_by(Transaction.occurred_at.desc()).limit(8)).all()
+            unack = s.scalars(select(Transaction).options(selectinload(Transaction.alerts)).where(
+                Transaction.flagged.is_(True), Transaction.label_fraud.is_(None))
+                .order_by(Transaction.occurred_at.desc()).limit(200)).all()
+            unack = sorted(unack, key=lambda t: txn_priority(t) or 9)[:5]  # stable: newest first within a priority
+            cats = spending.category_names(s, [t.merchant for t in recent])
+
+            def row(t: Transaction) -> dict:
+                return {"id": t.id, "merchant": t.merchant, "amount": t.amount, "currency": t.currency,
+                        "home": env.fx.to_home(float(t.amount), t.currency), "when": _local(t.occurred_at, "%b %d, %H:%M"),
+                        "category": cats.get(t.merchant), "state": txn_state(t), "priority": txn_priority(t),
+                        "reason": next((a.reason.split(":")[0] for a in sorted(t.alerts, key=lambda a: PRIORITY_RANK.get(a.severity, 3))), "")}
+
+            last_sync = s.get(SyncState, "last_imap_sync")
+            context = {
+                "recent": [row(t) for t in recent], "alarms": [row(t) for t in unack],
+                "alarm_counts": unack_by_priority(s), "currency": env.home_currency,
+                "last_sync": _local(datetime.fromisoformat(last_sync.value)) if last_sync else None,
+                "has_data": bool(recent),
+            }
+        return templates.TemplateResponse(request, "overview.html", context)
+
+    @app.get("/alarms")
     def alarm_summary(request: Request, page: int = 1):
         """ISA-18.2-style alarm summary: view tabs (unack / alarms / journal) refined by filters."""
         f = Filters.from_params(request.query_params)
@@ -212,7 +247,7 @@ def create_app(init: bool = True) -> FastAPI:
         """Apply one action to the selected rows, or to every row matching the page's filters."""
         form = await request.form()
         qs = str(form.get("filters", ""))
-        back = "/?" + qs if qs else "/"
+        back = "/alarms?" + qs if qs else "/alarms"
         action = str(form.get("action", ""))
         if action not in BULK_ACTIONS:
             return redirect(back, error="choose a bulk action")

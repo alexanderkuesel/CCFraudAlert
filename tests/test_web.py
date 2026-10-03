@@ -14,9 +14,9 @@ def test_pages_and_rule_crud(db, tmp_path):
     pipeline.import_eml_files([p])
     client = TestClient(create_app(init=False))
 
-    r = client.get("/")
+    r = client.get("/alarms")
     assert r.status_code == 200 and "HOTEL NOVA" in r.text and "Large or foreign purchase" in r.text
-    assert client.get("/?flagged=true").text.count('aria-label="Select HOTEL NOVA"') == 1  # one row
+    assert client.get("/alarms?flagged=true").text.count('aria-label="Select HOTEL NOVA"') == 1  # one row
     assert client.get("/rules").status_code == 200
     assert client.get("/emails").status_code == 200
 
@@ -136,7 +136,7 @@ def test_review_styling_and_comments(db, tmp_path):
     assert len(by["LEGITCO"]["comment"]) == 1000
     assert by["PENDING"]["comment"] is None
 
-    html = client.get("/?view=journal").text
+    html = client.get("/alarms?view=journal").text
     rows = {m: html.split(m)[0].rsplit("<tr", 1)[1] for m in ("FRAUDY", "LEGITCO", "PENDING")}
     assert 'class="row-fraud' in rows["FRAUDY"]
     assert 'class="row-legit' in rows["LEGITCO"]
@@ -162,22 +162,22 @@ def test_alarm_summary_views_banner_and_priorities(db, tmp_path):
     pipeline.import_eml_files(files)
     client = TestClient(create_app(init=False))
 
-    html = client.get("/").text  # default view = unacknowledged
-    assert "CC Transaction Alarm Dashboard" in html and "Passive monitor" in html
+    html = client.get("/alarms").text  # default view = unacknowledged
+    assert "Finance Trends &amp; Alarms" in html and "Passive" in html
     assert "COFFEE" not in html  # no alarm -> not in the alarm summary
     assert html.index("CARD TESTER") < html.index("BIG TV")  # High (card test) sorts before Medium
     assert 'title="Priority 1 · High"' in html and 'title="Priority 2 · Medium"' in html
     assert "Unacknowledged alarms" in html  # banner
-    assert "COFFEE" in client.get("/?view=journal").text
+    assert "COFFEE" in client.get("/alarms?view=journal").text
 
     ids = {t["merchant"]: t["id"] for t in client.get("/api/transactions").json()}
     client.post(f"/transactions/{ids['CARD TESTER']}/label", data={"label": "fraud"})
     client.post(f"/transactions/{ids['BIG TV']}/label", data={"label": "legit"})
-    html = client.get("/").text
+    html = client.get("/alarms").text
     assert "All clear." in html and "No unacknowledged alarms" in html
-    alarms = client.get("/?view=alarms").text
+    alarms = client.get("/alarms?view=alarms").text
     assert "CARD TESTER" in alarms and "BIG TV" in alarms and "✗ FRAUD" in alarms and "✓ LEGIT" in alarms
-    assert client.get("/?flagged=true").text.count("BIG TV") >= 1  # old links still work
+    assert client.get("/alarms?flagged=true").text.count("BIG TV") >= 1  # old links still work
 
     with db.session_scope() as s:
         rule_id = s.scalar(select(Rule.id).where(Rule.name == "Large or foreign purchase"))
@@ -185,7 +185,7 @@ def test_alarm_summary_views_banner_and_priorities(db, tmp_path):
     assert "is now Low priority" in r.text
     assert "priority must be one of" in client.post(f"/rules/{rule_id}/priority", data={"severity": "urgent"}).text
     client.post(f"/transactions/{ids['BIG TV']}/label", data={"label": ""})  # un-acknowledge
-    assert 'title="Priority 3 · Low"' in client.get("/").text
+    assert 'title="Priority 3 · Low"' in client.get("/alarms").text
 
 
 def test_notification_leads_with_priority(db, tmp_path, monkeypatch):
@@ -218,3 +218,30 @@ def test_static_assets_are_versioned_by_content(db):
         assert m.group(1) == hashlib.sha256((static / asset).read_bytes()).hexdigest()[:12]
         r = client.get(f"/static/{asset}?v={m.group(1)}")
         assert r.status_code == 200 and r.content == (static / asset).read_bytes()
+
+
+def test_overview_is_the_home_page_and_old_alarm_links_redirect(db, tmp_path):
+    now = datetime.now(timezone.utc)
+    files = []
+    for i, (merchant, amount) in enumerate([("AUTOMERCADO", "42.10"), ("BIG TV", "900.00")]):
+        p = tmp_path / f"{i}.eml"
+        p.write_bytes(make_eml("Alert", f"You spent ${amount} at {merchant}.", now - timedelta(hours=5 - i)))
+        files.append(p)
+    pipeline.import_eml_files(files)
+    client = TestClient(create_app(init=False))
+
+    html = client.get("/").text
+    assert "<h1>Overview</h1>" in html and "overview.js" in html and "charts.js" in html
+    assert "Recent transactions" in html and "AUTOMERCADO" in html and "Groceries" in html  # labelled with its category
+    assert 'class="nav-count p2"' in html  # BIG TV raised a medium alarm: counted on the Alarms nav item
+    assert "BIG TV" in html.split('id="ov-alarms-h"')[1]  # and listed in the alarms card
+    assert client.get("/?msg=Synced").status_code == 200  # flash messages stay on the overview
+
+    r = client.get("/?view=unack&q=tv", follow_redirects=False)  # old bookmarks and report links
+    assert r.status_code == 307 and r.headers["location"] == "/alarms?view=unack&q=tv"
+    assert "BIG TV" in client.get("/alarms?view=unack").text
+
+
+def test_overview_without_data(db):
+    html = TestClient(create_app(init=False)).get("/").text
+    assert "No transactions yet" in html and "All clear." in html

@@ -307,6 +307,14 @@ def _category_map(session: Session) -> dict[str, int | None]:
     return out
 
 
+def category_names(session: Session, merchants: list[str]) -> dict[str, str]:
+    """Merchant name -> its category's name (Uncategorized when none), for labelling transaction lists."""
+    sync_tags(session)  # merchants seen for the first time get their automatic category
+    catmap = _category_map(session)
+    names = {c.id: c.name for c in session.scalars(select(Category))}
+    return {m: names.get(catmap.get(merchant_key(m or "")), UNCATEGORIZED) for m in merchants}
+
+
 # ---- aggregation ----------------------------------------------------------------------------------
 
 @dataclass

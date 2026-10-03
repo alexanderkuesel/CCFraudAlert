@@ -27,7 +27,7 @@ from fraudalert.models import Alert, SyncState, Transaction
 
 log = logging.getLogger(__name__)
 
-APP_NAME = "CC Transaction Alarm Dashboard"
+APP_NAME = "Finance Trends & Alarms"
 PREFS_KEY = "pref:daily_report"
 LAST_SENT_KEY = "daily_report_last_sent"
 LAST_ERROR_KEY = "daily_report_last_error"
@@ -193,7 +193,7 @@ def build_report(session: Session, settings: Settings, since: datetime, until: d
                   f"  [{state(t)}]" for t in period[:MAX_ROWS]]
         lines.append("")
     if link:
-        lines.append(f"Open the dashboard: {link}/?view=unack")
+        lines.append(f"Open the dashboard: {link}/alarms?view=unack")
     lines.append(f"{APP_NAME} is a passive monitor: it never blocks cards, contacts your bank or moves money.")
     text = "\n".join(lines)
 
@@ -265,7 +265,7 @@ def build_report(session: Session, settings: Settings, since: datetime, until: d
                  else e(call))
     parts = [
         '<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#1d1e20;max-width:900px">',
-        f'<div style="background:#3a3d42;color:#e9eaeb;padding:12px 16px"><b>{APP_NAME}</b> '
+        f'<div style="background:#3a3d42;color:#e9eaeb;padding:12px 16px"><b>{e(APP_NAME)}</b> '
         f'<span style="font-size:11px;border:1px solid #b3b6ba;padding:1px 5px;margin-left:6px">PASSIVE MONITOR</span>'
         f'<div style="font-size:13px;color:#b3b6ba;margin-top:4px">Daily report · {e(local_day.strftime("%A %d %B %Y"))}</div></div>',
         f'<div style="background:#eaebec;padding:10px 16px;font-size:13px">'
@@ -290,9 +290,9 @@ def build_report(session: Session, settings: Settings, since: datetime, until: d
         parts += ['<h3 style="margin:18px 16px 6px">Transactions since the last report</h3>',
                   f'<div style="margin:0 16px">{table(period, with_alarm=False)}</div>']
     if link:
-        parts.append(f'<p style="margin:18px 16px"><a href="{e(link)}/?view=unack" '
-                     f'style="background:#3a3d42;color:#fff;padding:8px 12px;text-decoration:none">Open the alarm summary</a></p>')
-    parts.append(f'<p style="margin:18px 16px;font-size:12px;color:#5b5e63">{APP_NAME} is a passive monitor: it reads '
+        parts.append(f'<p style="margin:18px 16px"><a href="{e(link)}/alarms?view=unack" '
+                     f'style="background:#3a3d42;color:#fff;padding:8px 12px;text-decoration:none">Review alarms</a></p>')
+    parts.append(f'<p style="margin:18px 16px;font-size:12px;color:#5b5e63">{e(APP_NAME)} is a passive monitor: it reads '
                  f'your bank\'s alert emails and never blocks cards, contacts your bank or moves money.</p></div>')
     return Report(subject, text, "".join(parts), len(unack), len(period))
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fraudalert"
 version = "0.1.0"
-description = "CC Transaction Alarm Dashboard: a passive, SCADA/ISA-18.2-style alarm dashboard for card transactions from bank alert emails."
+description = "Finance Trends & Alarms: a self-hosted personal finance dashboard built from bank alert emails, with passive fraud alarms."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110",
