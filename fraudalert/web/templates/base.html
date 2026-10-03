@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Overview{% endblock %} · {{ APP_NAME }}</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230f766e'/><polyline points='3,11 6.5,7.5 9,9.5 13,4.5' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='2' fill='%233a3d42'/><polyline points='3,11 6.5,7.5 9,9.5 13,4.5' fill='none' stroke='%23e9eaeb' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>">
   <link rel="stylesheet" href="{{ asset('style.css') }}">
 </head>
 <body>
@@ -12,14 +12,15 @@
 {% set b = alarm_banner() %}
 <header class="app-header">
   <a class="brand" href="/" aria-label="{{ APP_NAME }}: overview">
-    <svg class="brand-mark" viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16" rx="4"/><polyline points="3,11 6.5,7.5 9,9.5 13,4.5"/></svg>
+    <svg class="brand-mark" viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16" rx="2"/><polyline points="3,11 6.5,7.5 9,9.5 13,4.5"/></svg>
     <span class="brand-name">{{ APP_NAME }}</span>
   </a>
+  <span class="passive-tag" title="Monitors and alarms only. It never blocks a card, contacts your bank or moves money.">Passive monitor</span>
   <nav aria-label="Main">
     <a href="/" class="{{ 'active' if p == '/' }}">Overview</a>
     <a href="/spending" class="{{ 'active' if p.startswith('/spending') }}">Spending</a>
     <a href="/alarms" class="{{ 'active' if p.startswith('/alarms') }}">Alarms{% if b.total %}
-      <span class="nav-count {{ 'p1' if b.counts[1] else 'p2' if b.counts[2] else 'p3' }}"
+      <span class="nav-count {{ 'p1 blink' if b.counts[1] else 'p2' if b.counts[2] else 'p3' }}"
             title="{{ b.total }} unacknowledged alarm{{ 's' if b.total != 1 }}">{{ b.total }}</span>{% endif %}</a>
     <a href="/network" class="{{ 'active' if p.startswith('/network') }}">Network</a>
     <span class="nav-sep" aria-hidden="true"></span>
@@ -38,7 +39,8 @@
 <footer class="app-footer">
   {{ APP_NAME }} turns your bank's transaction alert emails (read-only) into a personal finance dashboard, and
   watches them for unusual charges. It never blocks cards, contacts your bank or moves money: alarms are passive,
-  acting on them is up to you.
+  acting on them is up to you. Alarm handling follows ISA-18.2; screen design follows ISA-101 (grey by default,
+  colour only for abnormal conditions).
 </footer>
 </body>
 </html>

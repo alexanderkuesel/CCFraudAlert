@@ -265,9 +265,9 @@ def build_report(session: Session, settings: Settings, since: datetime, until: d
                  else e(call))
     parts = [
         '<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#1d1e20;max-width:900px">',
-        f'<div style="background:#0f766e;color:#ffffff;padding:12px 16px"><b>{e(APP_NAME)}</b> '
-        f'<span style="font-size:11px;border:1px solid #a7dcd5;padding:1px 5px;margin-left:6px">PASSIVE ALARMS</span>'
-        f'<div style="font-size:13px;color:#cdeee9;margin-top:4px">Daily report · {e(local_day.strftime("%A %d %B %Y"))}</div></div>',
+        f'<div style="background:#3a3d42;color:#e9eaeb;padding:12px 16px"><b>{e(APP_NAME)}</b> '
+        f'<span style="font-size:11px;border:1px solid #b3b6ba;padding:1px 5px;margin-left:6px">PASSIVE MONITOR</span>'
+        f'<div style="font-size:13px;color:#b3b6ba;margin-top:4px">Daily report · {e(local_day.strftime("%A %d %B %Y"))}</div></div>',
         f'<div style="background:#eaebec;padding:10px 16px;font-size:13px">'
         f'<b>{len(period)}</b> transaction(s) · <b>{spend:,.2f} {e(env.home_currency)}</b> · new alarms: '
         f'<b style="color:{PRIORITY_COLOR[1]}">{new_alarms[1]} High</b>, <b style="color:{PRIORITY_COLOR[2]}">{new_alarms[2]} Medium</b>, '
@@ -291,7 +291,7 @@ def build_report(session: Session, settings: Settings, since: datetime, until: d
                   f'<div style="margin:0 16px">{table(period, with_alarm=False)}</div>']
     if link:
         parts.append(f'<p style="margin:18px 16px"><a href="{e(link)}/alarms?view=unack" '
-                     f'style="background:#0f766e;color:#fff;padding:8px 12px;text-decoration:none">Review alarms</a></p>')
+                     f'style="background:#3a3d42;color:#fff;padding:8px 12px;text-decoration:none">Review alarms</a></p>')
     parts.append(f'<p style="margin:18px 16px;font-size:12px;color:#5b5e63">{e(APP_NAME)} is a passive monitor: it reads '
                  f'your bank\'s alert emails and never blocks cards, contacts your bank or moves money.</p></div>')
     return Report(subject, text, "".join(parts), len(unack), len(period))

@@ -95,7 +95,7 @@ def test_report_content_is_ready_for_calling_the_bank(env, tmp_path):
     assert "Open the dashboard: http://192.168.1.20:8000/alarms?view=unack" in t
     h = r.html
     assert 'href="tel:+5062295-9898"' in h and "BEST BUY &amp; CO" in h and "BEST BUY & CO" not in h
-    assert "657401" in h and "PASSIVE ALARMS" in h
+    assert "657401" in h and "PASSIVE MONITOR" in h
 
 
 def test_all_clear_and_missing_phone(env, tmp_path):

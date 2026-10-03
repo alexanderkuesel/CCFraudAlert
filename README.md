@@ -15,6 +15,11 @@ It reads those emails (read-only), stores every transaction in PostgreSQL, and t
   model finds unusual) are raised as prioritised alarms for you to review, plus an optional daily report
   email with what to quote when you call your bank.
 
+It looks and behaves like a **SCADA operator screen**: the screens follow **ISA-101** (grey and quiet while
+everything is normal, colour reserved for abnormal conditions such as alarms and budgets at their HI/HIHI
+limits), alarms follow **ISA-18.2** (priorities, acknowledgement, journal), and spending is modelled like a
+plant historian (categories are devices, merchants are tags, budgets are setpoints).
+
 > **Passive by design.** It only *observes*: it reads your mailbox read-only (it never marks, moves or
 > sends mail), and it never blocks a card, contacts your bank or moves money. Acting on an alarm (calling
 > the bank, freezing the card) is always your decision. It is also **not real-time**: it sees a
