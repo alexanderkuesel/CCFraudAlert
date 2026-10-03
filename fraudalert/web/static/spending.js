@@ -2,68 +2,15 @@
 // Plain SVG. All names come from bank emails, so text is inserted with textContent only.
 (function () {
   "use strict";
-  const SVG = "http://www.w3.org/2000/svg";
+  const { h, money, longMonth, signed, api, MIN_PACE_DAYS, sparkline, statusBadge } = window.FTA;
   const $ = id => document.getElementById(id);
   const state = { pen: { type: "all" }, bucket: "day", days: 90, month: null, overview: null, series: null, open: new Set() };
   let currency = "";
+  const gauge = d => window.FTA.gauge(d, currency);
 
-  // ---------- helpers ----------
-  const el = (tag, attrs = {}, parent) => {
-    const e = document.createElementNS(SVG, tag);
-    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
-    if (parent) parent.appendChild(e);
-    return e;
-  };
-  const h = (tag, text, cls) => { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; };
-  const money = (v, dp = 2) => (v || 0).toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
-  const compact = v => Math.abs(v) >= 1000 ? (v / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 }) + "K" : money(v, 0);
-  const monthName = iso => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month: "short" });
-  const dayLabel = iso => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  const STATUS = { hi: "HI", hihi: "HIHI" };
-  const MIN_PACE_DAYS = 7; // a straight-line projection from the first few days of a month is noise
-  function niceMax(v) {
-    if (v <= 0) return 1;
-    const p = Math.pow(10, Math.floor(Math.log10(v))), n = v / p;
-    return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 4 ? 4 : n <= 6 ? 6 : n <= 8 ? 8 : 10) * p; // a quarter of each is a clean tick
-  }
-  async function api(url, opts = {}) {
-    const r = await fetch(url, { headers: { "content-type": "application/json" }, ...opts });
-    const body = r.status === 204 ? {} : await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(body.detail || `request failed (${r.status})`);
-    return body;
-  }
   function flash(text, error = false) {
     const m = $("hist-msg"); m.textContent = text; m.hidden = false; m.classList.toggle("error", error);
     clearTimeout(flash.t); flash.t = setTimeout(() => (m.hidden = true), 4000);
-  }
-
-  // Sparkline: 6 monthly values, de-emphasised line, current month as the end dot.
-  function sparkline(values, w = 72, hgt = 20) {
-    const s = el("svg", { width: w, height: hgt, viewBox: `0 0 ${w} ${hgt}`, class: "spark", "aria-hidden": "true" });
-    const max = Math.max(...values, 1), step = (w - 6) / Math.max(values.length - 1, 1);
-    const pts = values.map((v, i) => [3 + i * step, hgt - 3 - (v / max) * (hgt - 6)]);
-    el("polyline", { points: pts.map(p => p.join(",")).join(" "), class: "spark-line" }, s);
-    const [x, y] = pts[pts.length - 1];
-    el("circle", { cx: x, cy: y, r: 2.5, class: "spark-end" }, s);
-    return s;
-  }
-
-  // Analog indicator (ISA-101 style moving bar): fill = month-to-date vs budget, ticks at HI and HIHI.
-  function gauge(d) {
-    const wrap = h("span", null, "gauge" + (d.status === "hi" || d.status === "hihi" ? " " + d.status : ""));
-    if (!d.budget) { wrap.classList.add("none"); wrap.title = "No budget set"; return wrap; }
-    const fill = h("span", null, "gauge-fill");
-    fill.style.width = Math.min(d.pct / 1.2, 1) * 100 + "%"; // track spans 0-120% of budget
-    wrap.append(fill, Object.assign(h("span", null, "gauge-tick"), { style: `left:${(0.8 / 1.2) * 100}%` }),
-      Object.assign(h("span", null, "gauge-tick sp"), { style: `left:${(1 / 1.2) * 100}%` }));
-    wrap.title = `${Math.round(d.pct * 100)}% of the ${money(d.budget, 0)} ${currency} monthly budget`;
-    return wrap;
-  }
-  function statusBadge(status) {
-    if (!STATUS[status]) return null;
-    const b = h("span", STATUS[status], "lim-badge " + status);
-    b.title = status === "hihi" ? "Over budget (≥ 100%)" : "Approaching budget (≥ 80%)";
-    return b;
   }
 
   // ---------- overview: KPIs, tag browser, management tables ----------
@@ -210,213 +157,31 @@
     drawTrend(); drawMtd(); drawHist(); drawTable();
   }
 
-  function frame(container, height) {
-    container.replaceChildren();
-    const W = Math.max(container.clientWidth, 300), H = height, m = { l: 52, r: 12, t: 14, b: 26 };
-    const svg = el("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}` }, container);
-    return { svg, W, H, m, iw: W - m.l - m.r, ih: H - m.t - m.b };
-  }
-  function yAxis(f, max) {
-    for (let i = 0; i <= 4; i++) {
-      const v = max * i / 4, y = f.m.t + f.ih - (v / max) * f.ih;
-      el("line", { x1: f.m.l, x2: f.W - f.m.r, y1: y, y2: y, class: i ? "grid" : "base" }, f.svg);
-      el("text", { x: f.m.l - 6, y: y + 4, class: "tick", "text-anchor": "end" }, f.svg).textContent = compact(v);
-    }
-  }
-  // HIHI is labelled above its line and HI below its (lower) line, so the two labels never collide.
-  function limitLine(f, value, max, cls, label) {
-    if (value == null || value > max) return;
-    const y = f.m.t + f.ih - (value / max) * f.ih;
-    el("line", { x1: f.m.l, x2: f.W - f.m.r, y1: y, y2: y, class: "limit " + cls }, f.svg);
-    const below = cls !== "hihi" && y + 13 < f.m.t + f.ih; // HI sits under its line unless that hits the axis
-    const t = el("text", { x: below || cls === "hihi" ? f.W - f.m.r - 2 : f.m.l + 4, y: below ? y + 13 : y - 4, class: "limit-label",
-      "text-anchor": below || cls === "hihi" ? "end" : "start" }, f.svg);
-    t.textContent = label;
-  }
-  const tip = $("tip");
-  function showTip(ev, lines) {
-    tip.replaceChildren(); lines.forEach((l, i) => tip.append(h(i ? "div" : "b", l)));
-    tip.hidden = false;
-    const box = tip.parentElement.getBoundingClientRect();
-    const x = ev.clientX - box.left, y = ev.clientY - box.top;
-    tip.style.left = Math.min(x + 14, box.width - tip.offsetWidth - 4) + "px";
-    tip.style.top = Math.max(y - tip.offsetHeight - 10, 4) + "px";
-  }
-  const hideTip = () => (tip.hidden = true);
-
-  // Tick labels carry the year on the first tick and whenever it changes ("Jan '26"), so multi-year
-  // ranges stay readable.
-  function tickLabel(iso, bucket, prevIso) {
-    const d = new Date(iso + "T12:00:00"), yr = ` '${String(d.getFullYear()).slice(2)}`;
-    const newYear = !prevIso || prevIso.slice(0, 4) !== iso.slice(0, 4);
-    return (bucket === "month" ? monthName(iso) : dayLabel(iso)) + (newYear ? yr : "");
-  }
-
   function drawTrend() {
-    const s = state.series, f = frame($("chart-trend"), 240), pts = s.points;
-    const monthly = s.bucket === "month" && s.budget, anyFixed = pts.some(p => p.fixed > 0);
+    const s = state.series;
+    const { anyFixed } = window.FTA.bars($("chart-trend"), { points: s.points, bucket: s.bucket, budget: s.budget, currency });
     $("trend-legend").hidden = !anyFixed;
-    let prevTick = null;
-    const max = niceMax(Math.max(...pts.map(p => p.value), monthly ? s.budget * 1.05 : 0, 1));
-    yAxis(f, max);
-    const slot = f.iw / pts.length, bw = Math.max(Math.min(24, slot - 2), 1); // <= 24px, 2px gap
-    const every = Math.ceil(pts.length / Math.max(Math.floor(f.iw / 64), 1));
-    pts.forEach((p, i) => {
-      const x = f.m.l + i * slot + (slot - bw) / 2, hgt = (p.value / max) * f.ih, y = f.m.t + f.ih - hgt;
-      const over = monthly && p.value >= s.budget ? " hihi" : monthly && p.value >= s.budget * 0.8 ? " hi" : "";
-      // card spending from the baseline; fixed expenses stacked on top in a lighter tone, 2px apart
-      const cardH = ((p.value - p.fixed) / max) * f.ih, fixedH = hgt - cardH, gap = cardH > 0 && fixedH > 0 ? Math.min(2, fixedH) : 0;
-      const roundTop = (yTop, h, cls) => {
-        const r = Math.min(4, h, bw / 2); // 4px rounded data-end, square at the baseline
-        el("path", { class: cls, d: `M${x},${yTop + h}V${yTop + r}Q${x},${yTop} ${x + r},${yTop}H${x + bw - r}Q${x + bw},${yTop} ${x + bw},${yTop + r}V${yTop + h}Z` }, f.svg);
-      };
-      if (cardH > 0) {
-        if (fixedH > 0) el("rect", { class: "bar" + over, x, y: f.m.t + f.ih - cardH, width: bw, height: cardH }, f.svg);
-        else roundTop(y, hgt, "bar" + over);
-      }
-      if (fixedH - gap > 0) roundTop(y, fixedH - gap, "bar fixed");
-      const hit = el("rect", { x: f.m.l + i * slot, y: f.m.t, width: slot, height: f.ih, class: "hit" }, f.svg);
-      const when = s.bucket === "month" ? new Date(p.start + "T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" })
-        : s.bucket === "week" ? "Week of " + dayLabel(p.start) : dayLabel(p.start);
-      const lines = [`${money(p.value)} ${currency}`, when, `${p.count} card transaction${p.count === 1 ? "" : "s"}`];
-      if (p.fixed > 0) lines.push(`incl. ${money(p.fixed, 0)} fixed expenses`);
-      if (monthly) lines.push(`${Math.round(p.value / s.budget * 100)}% of budget` + (over ? ` · ${STATUS[over.trim()]}` : ""));
-      hit.addEventListener("pointermove", ev => showTip(ev, lines)); hit.addEventListener("pointerleave", hideTip);
-      if (i % every === 0) {
-        el("text", { x: f.m.l + i * slot + slot / 2, y: f.H - 8, class: "tick", "text-anchor": "middle" }, f.svg)
-          .textContent = tickLabel(p.start, s.bucket, prevTick);
-        prevTick = p.start;
-      }
-    });
-    if (monthly) { limitLine(f, s.budget * 0.8, max, "hi", "HI 80%"); limitLine(f, s.budget, max, "hihi", "HIHI budget"); }
   }
 
-  const signed = v => (v >= 0 ? "+" : "−") + money(Math.abs(v), 0);
-  const pctText = (v, base) => { const p = Math.round(Math.abs(v) / base * 100); return p ? `${v >= 0 ? "+" : "−"}${p}%` : "0%"; };
-  const pctOf = (v, base) => base ? ` (${pctText(v, base)})` : "";
-  const longMonth = iso => new Date(iso.slice(0, 7) + "-01T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" });
-
-  // Running total for one month: actual (the process value) against the expected path (the setpoint
-  // trajectory: your usual month plus fixed expenses), the budget limits, and the forecast to month end.
   function drawMtd() {
-    const s = state.series, m = s.mtd, f = frame($("chart-mtd"), 230);
-    const n = m.days_in_month, cum = m.cumulative, today = cum.length, last = cum[today - 1] || 0, exp = m.expected;
-    const forecast = m.current && m.projected != null && today < n
-      ? Array.from({ length: n - today + 1 }, (_, i) => exp
-        ? last + exp[today - 1 + i] - exp[today - 1]
-        : last + (m.projected - last) * i / (n - today))
-      : null;
-    const max = niceMax(Math.max(last, m.projected || 0, exp ? exp[n - 1] : 0, m.budget ? m.budget * 1.05 : 0, 1));
-    yAxis(f, max);
-    const X = d => f.m.l + (d - 1) / Math.max(n - 1, 1) * f.iw, Y = v => f.m.t + f.ih - (v / max) * f.ih;
-    for (const d of [1, 8, 15, 22, n]) el("text", { x: X(d), y: f.H - 8, class: "tick", "text-anchor": "middle" }, f.svg).textContent = String(d);
-    if (m.budget) { limitLine(f, m.budget * 0.8, max, "hi", "HI 80%"); limitLine(f, m.budget, max, "hihi", "HIHI budget"); }
-    if (exp) {
-      el("polyline", { class: "expected", points: exp.map((v, i) => `${X(i + 1)},${Y(v)}`).join(" ") }, f.svg);
-      if (m.current && today < n) { // a finished month's numbers are in the subtitle; this would sit on the actual label
-        el("text", { x: f.W - f.m.r - 2, y: Y(exp[n - 1]) - 6, class: "end-label muted-label", "text-anchor": "end" }, f.svg)
-          .textContent = `expected ${money(exp[n - 1], 0)}`;
-      }
-    }
-    if (forecast) el("polyline", { class: "projection", points: forecast.map((v, i) => `${X(today + i)},${Y(v)}`).join(" ") }, f.svg);
-    if (today) {
-      // the gap between actual and expected, as a quiet wash
-      if (exp) el("path", { class: "gap", d: `M${X(1)},${Y(cum[0])}` + cum.map((v, i) => `L${X(i + 1)},${Y(v)}`).join("") +
-        exp.slice(0, today).map((v, i) => `L${X(today - i)},${Y(exp[today - 1 - i])}`).join("") + "Z" }, f.svg);
-      el("polyline", { class: "pen", points: cum.map((v, i) => `${X(i + 1)},${Y(v)}`).join(" ") }, f.svg);
-      el("circle", { class: "pen-dot" + (m.status === "hi" || m.status === "hihi" ? " " + m.status : ""), cx: X(today), cy: Y(last), r: 4.5 }, f.svg);
-      el("text", { x: Math.min(X(today) + 8, f.W - f.m.r - 60), y: Y(last) - 8, class: "end-label" }, f.svg).textContent = money(last, 0);
-    }
+    const m = state.series.mtd;
+    const r = window.FTA.runningTotal($("chart-mtd"), m, { currency });
     $("mtd-month").textContent = longMonth(m.month);
     $("mtd-next").disabled = m.current;
-    $("key-forecast").hidden = !forecast;
-    $("mtd-basis").textContent = exp ? `(your usual month: average of ${m.basis.length === 1 ? longMonth(m.basis[0]) : m.basis.length + " months before"}` +
-      (m.fixed ? `, plus ${money(m.fixed, 0)} fixed)` : ")") : "(needs a complete earlier month of history)";
-    const bits = [];
-    if (m.current) {
-      bits.push(`${money(last, 0)} ${currency} so far`);
-      if (exp) bits.push(`${signed(last - exp[today - 1])}${pctOf(last - exp[today - 1], exp[today - 1])} vs expected by today`);
-      bits.push(m.projected != null ? `forecast ${money(m.projected, 0)} by month end` : `forecast from day ${MIN_PACE_DAYS}`);
-    } else {
-      bits.push(`${money(last, 0)} ${currency} spent`);
-      if (exp) bits.push(`expected ${money(exp[n - 1], 0)}, ${signed(last - exp[n - 1])}${pctOf(last - exp[n - 1], exp[n - 1])}`);
-    }
-    if (m.budget) bits.push(`budget ${money(m.budget, 0)} (${Math.round(last / m.budget * 100)}% used)`);
-    $("mtd-sub").textContent = bits.join(" · ");
-    // crosshair: snap to the nearest day
-    const cross = el("line", { class: "cross", y1: f.m.t, y2: f.m.t + f.ih, visibility: "hidden" }, f.svg);
-    const hit = el("rect", { x: f.m.l, y: f.m.t, width: f.iw, height: f.ih, class: "hit" }, f.svg);
-    hit.addEventListener("pointermove", ev => {
-      const box = f.svg.getBoundingClientRect(), d = Math.round((ev.clientX - box.left - f.m.l) / f.iw * (n - 1)) + 1;
-      const day = Math.min(Math.max(d, 1), n); cross.setAttribute("x1", X(day)); cross.setAttribute("x2", X(day)); cross.setAttribute("visibility", "visible");
-      const date = dayLabel(m.month.slice(0, 8) + String(day).padStart(2, "0")), e = exp ? exp[day - 1] : null, lines = [];
-      if (day <= today) {
-        lines.push(`${money(cum[day - 1])} ${currency}`, `Actual to ${date}`);
-        if (e != null) lines.push(`Expected ${money(e, 0)} · ${signed(cum[day - 1] - e)}${pctOf(cum[day - 1] - e, e)}`);
-        if (m.budget) lines.push(`${Math.round(cum[day - 1] / m.budget * 100)}% of budget`);
-      } else {
-        lines.push(forecast ? `${money(forecast[day - today], 0)} ${currency}` : date, forecast ? `Forecast by ${date}` : "No forecast yet");
-        if (e != null) lines.push(`Expected ${money(e, 0)}`);
-      }
-      showTip(ev, lines);
-    });
-    hit.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); hideTip(); });
-    drawMtdTable();
+    $("key-forecast").hidden = !r.hasForecast;
+    $("mtd-basis").textContent = r.basis;
+    $("mtd-sub").textContent = r.summary;
+    $("mtd-table").replaceChildren(window.FTA.runningTotalTable(m, currency));
   }
 
-  function drawMtdTable() {
-    const m = state.series.mtd, t = h("table");
-    const head = t.createTHead().insertRow();
-    ["Day", `Actual (${currency})`, `Expected (${currency})`, "Difference"].forEach(x => head.append(h("th", x)));
-    const body = t.createTBody();
-    m.cumulative.forEach((v, i) => {
-      const r = body.insertRow(), e = m.expected ? m.expected[i] : null;
-      r.insertCell().textContent = dayLabel(m.month.slice(0, 8) + String(i + 1).padStart(2, "0"));
-      for (const x of [money(v), e == null ? "—" : money(e), e == null ? "—" : signed(v - e)]) { const c = r.insertCell(); c.className = "num"; c.textContent = x; }
-    });
-    $("mtd-table").replaceChildren(t);
-  }
-
-  // Expected vs actual by month: a bar per month (actual) with a tick for what was expected.
+  // Expected vs actual by month; clicking a month opens its running total.
   function drawHist() {
-    const hist = state.series.history, f = frame($("chart-hist"), 200);
-    const max = niceMax(Math.max(...hist.map(x => Math.max(x.actual, x.expected || 0, x.projected || 0)), 1));
-    yAxis(f, max);
-    const slot = f.iw / hist.length, bw = Math.min(24, slot - 2), Y = v => f.m.t + f.ih - (v / max) * f.ih;
-    hist.forEach((x, i) => {
-      const cx = f.m.l + i * slot + slot / 2, xb = cx - bw / 2, y = Y(x.actual), hgt = f.m.t + f.ih - y;
-      if (hgt > 0) {
-        const r = Math.min(4, hgt, bw / 2);
-        el("path", { class: "bar" + (x.current ? " partial" : ""), d: `M${xb},${y + hgt}V${y + r}Q${xb},${y} ${xb + r},${y}H${xb + bw - r}Q${xb + bw},${y} ${xb + bw},${y + r}V${y + hgt}Z` }, f.svg);
-      }
-      if (x.expected != null) el("line", { class: "exp-tick", x1: cx - bw / 2 - 6, x2: cx + bw / 2 + 6, y1: Y(x.expected), y2: Y(x.expected) }, f.svg);
-      if (x.current && x.projected != null) el("line", { class: "exp-tick forecast", x1: cx - bw / 2 - 6, x2: cx + bw / 2 + 6, y1: Y(x.projected), y2: Y(x.projected) }, f.svg);
-      el("text", { x: cx, y: f.H - 8, class: "tick" + (state.series.mtd.month.startsWith(x.month) ? " sel" : ""), "text-anchor": "middle" }, f.svg)
-        .textContent = tickLabel(x.month + "-01", "month", i ? hist[i - 1].month + "-01" : null);
-      const ref = x.current ? x.projected : x.actual;
-      if (x.expected && ref != null) {
-        const top = Math.min(y, Y(x.expected), x.current && x.projected != null ? Y(x.projected) : y);
-        el("text", { x: cx, y: Math.max(top - 8, f.m.t + 8), class: "delta-label", "text-anchor": "middle" }, f.svg)
-          .textContent = pctText(ref - x.expected, x.expected);
-      }
-      const lines = [longMonth(x.month), `${x.current ? "So far" : "Actual"} ${money(x.actual, 0)} ${currency}`];
-      if (x.current && x.projected != null) lines.push(`Forecast ${money(x.projected, 0)}`);
-      lines.push(x.expected != null ? `Expected ${money(x.expected, 0)}` + (ref != null ? ` · ${signed(ref - x.expected)}${pctOf(ref - x.expected, x.expected)}` : "") : "No expectation (not enough history)");
-      const hit = el("rect", { x: f.m.l + i * slot, y: f.m.t, width: slot, height: f.ih, class: "hit clickable" }, f.svg);
-      hit.addEventListener("pointermove", ev => showTip(ev, lines)); hit.addEventListener("pointerleave", hideTip);
-      hit.addEventListener("click", () => { state.month = x.current ? null : x.month; loadSeries(); });
+    const s = state.series;
+    window.FTA.history($("chart-hist"), s.history, {
+      currency, selectedMonth: s.mtd.month,
+      onPick: x => { state.month = x.current ? null : x.month; loadSeries(); },
     });
-    const t = h("table"), head = t.createTHead().insertRow();
-    ["Month", `Actual (${currency})`, `Expected (${currency})`, "Difference", "Forecast"].forEach(x => head.append(h("th", x)));
-    const body = t.createTBody();
-    [...hist].reverse().forEach(x => {
-      const r = body.insertRow(), ref = x.current ? x.projected : x.actual;
-      r.insertCell().textContent = longMonth(x.month) + (x.current ? " (so far)" : "");
-      for (const v of [money(x.actual), x.expected == null ? "—" : money(x.expected),
-        x.expected == null || ref == null ? "—" : signed(ref - x.expected) + pctOf(ref - x.expected, x.expected),
-        x.current && x.projected != null ? money(x.projected) : ""]) { const c = r.insertCell(); c.className = "num"; c.textContent = v; }
-    });
-    $("hist-table").replaceChildren(t);
+    $("hist-table").replaceChildren(window.FTA.historyTable(s.history, currency));
   }
 
   function drawTable() {

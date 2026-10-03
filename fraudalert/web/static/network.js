@@ -320,7 +320,7 @@
     }
     if (n.kind === "merchant") {
       const a = html("a", "View these transactions →");
-      a.href = "/?q=" + encodeURIComponent(n.query);
+      a.href = "/alarms?q=" + encodeURIComponent(n.query);
       detail.appendChild(a);
     }
   }
@@ -337,7 +337,7 @@
       const st = tr.insertCell(); st.className = "status-cell";
       const key = html("span", STATES[n.state].glyph, `key-node st-${n.state}`); key.setAttribute("aria-hidden", "true");
       st.append(key, document.createTextNode(STATES[n.state].label));
-      const name = tr.insertCell(); const a = html("a", n.label); a.href = "/?q=" + encodeURIComponent(n.query); name.appendChild(a);
+      const name = tr.insertCell(); const a = html("a", n.label); a.href = "/alarms?q=" + encodeURIComponent(n.query); name.appendChild(a);
       const num = (v) => { const c = tr.insertCell(); c.className = "num"; c.textContent = v; };
       num(String(n.count)); num(money(n.total)); num(String(n.cards));
       tr.insertCell().textContent = date(n.first_seen);

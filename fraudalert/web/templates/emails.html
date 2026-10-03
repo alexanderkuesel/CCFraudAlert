@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Emails{% endblock %}
 {% block content %}
+<div class="page-head"><div><h1>Emails</h1><p class="muted">The bank alert emails read from your inbox, and whether each one could be turned into a transaction.</p></div></div>
 <div class="toolbar">
   <a href="/emails?status=failed">Unparsed</a> · <a href="/emails?status=parsed">Parsed</a>
   <form class="inline" method="post" action="/emails/reparse" style="margin-left:auto"><button>Retry parsing unparsed emails</button></form>

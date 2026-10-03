@@ -84,7 +84,7 @@ def test_report_content_is_ready_for_calling_the_bank(env, tmp_path):
         assert prefs["to"] == "me@gmail.com"  # defaults to the IMAP address
         r = report.build_report(s, get_settings(), NOW - timedelta(days=1), NOW, prefs)
     # SODA TICA is on the same card within 48h of the $0.00 test, so it's escalated too
-    assert r.subject == "CC Transaction Alarm Dashboard · Sep 29: 3 unacknowledged (3 High)"
+    assert r.subject == "Finance Trends & Alarms · Sep 29: 3 unacknowledged (3 High)"
     assert r.unacknowledged == 3 and r.transactions == 3  # the hotel is 6 days old: not "since the last report"
     t = r.text
     assert "Call BAC Credomatic at +506 2295-9898 and quote the authorization code" in t
@@ -92,10 +92,10 @@ def test_report_content_is_ready_for_calling_the_bank(env, tmp_path):
     assert "[P1 High] 2026-09-29 09:05  0.00 USD  AMAZON.COM LLC  card …4321  auth 657401" in t
     assert "480.00 USD  BEST BUY & CO" in t
     assert "MARKED AS FRAUD" in t and "640.00 EUR  HOTEL LTD" in t
-    assert "Open the dashboard: http://192.168.1.20:8000/?view=unack" in t
+    assert "Open the dashboard: http://192.168.1.20:8000/alarms?view=unack" in t
     h = r.html
     assert 'href="tel:+5062295-9898"' in h and "BEST BUY &amp; CO" in h and "BEST BUY & CO" not in h
-    assert "657401" in h and "PASSIVE MONITOR" in h
+    assert "657401" in h and "PASSIVE ALARMS" in h
 
 
 def test_all_clear_and_missing_phone(env, tmp_path):

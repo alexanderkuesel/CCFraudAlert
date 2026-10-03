@@ -1,6 +1,27 @@
 {% extends "base.html" %}
 {% block title %}{{ VIEWS[view] }}{% endblock %}
 {% block content %}
+<div class="page-head">
+  <div>
+    <h1>Alarms <span class="passive-tag" title="Alarms are passive: nothing is blocked, reported or paid automatically.">Passive</span></h1>
+    <p class="muted">Charges that look like fraud: large or foreign purchases, card tests, and anything the anomaly model finds
+      unusual. Review each one and mark it legit or fraud. Alarm handling follows ISA-18.2 (priorities, acknowledgement, journal).</p>
+  </div>
+</div>
+{% set b = alarm_banner() %}
+<a class="alarm-banner {{ ('has-unack top-p' ~ (1 if b.counts[1] else 2 if b.counts[2] else 3)) if b.total else 'all-clear' }}" href="/alarms?view=unack" aria-label="Unacknowledged alarms">
+  {% if b.total %}
+    <span class="banner-label">Unacknowledged</span>
+    {% for rank in (1, 2, 3) %}
+      <span class="banner-count {{ 'zero' if not b.counts[rank] }}">
+        <span class="pri pri-{{ rank }} {{ 'blink' if b.counts[rank] }}" aria-hidden="true">{{ rank }}</span>
+        <b>{{ b.counts[rank] }}</b> {{ PRIORITY_NAME[rank] }}
+      </span>
+    {% endfor %}
+  {% else %}
+    <span class="banner-label">No unacknowledged alarms</span>
+  {% endif %}
+</a>
 <div class="kpis">
   <div class="kpi"><span>Unacknowledged</span><b>{{ counts.unack }}</b></div>
   <div class="kpi" title="Flagged transactions per day over the last 7 days">

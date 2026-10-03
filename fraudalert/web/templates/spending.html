@@ -4,7 +4,7 @@
 <div class="hist">
   <div class="hist-head">
     <div>
-      <h2 class="hist-title">Spend historian</h2>
+      <h1 class="hist-title">Spending</h1>
       <p class="muted hist-sub">Categories are <b>devices</b>, merchants are <b>tags</b>, spend is the tag value
         (<span data-bind="currency"></span>). A category's monthly budget is its setpoint, with
         <b>HI</b> at 80% and <b>HIHI</b> at 100% month to date. Transactions you marked as fraud are excluded.</p>
@@ -54,7 +54,6 @@
         </ul>
         <div class="chart" id="chart-trend" role="img" aria-label="Spend trend"></div>
         <details class="table-view"><summary>Show as table</summary><div id="trend-table"></div></details>
-        <div class="chart-tip" id="tip" hidden></div>
       </div>
       <div class="card">
         <div class="pen-head">
@@ -148,5 +147,6 @@
   </section>
   <div class="flash" id="hist-msg" hidden></div>
 </div>
+<script src="{{ asset('charts.js') }}"></script>
 <script src="{{ asset('spending.js') }}"></script>
 {% endblock %}
