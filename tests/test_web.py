@@ -202,3 +202,19 @@ def test_notification_leads_with_priority(db, tmp_path, monkeypatch):
     pipeline.import_eml_files([p])
     assert sent and sent[0]["priority"] == "HIGH" and sent[0]["text"].startswith("[HIGH] Transaction alarm")
     get_settings.cache_clear()
+
+
+def test_static_assets_are_versioned_by_content(db):
+    import hashlib
+    import re
+    from pathlib import Path
+
+    client = TestClient(create_app(init=False))
+    static = Path(__file__).parents[1] / "fraudalert" / "web" / "static"
+    for page, asset in [("/", "style.css"), ("/spending", "spending.js"), ("/network", "network.js")]:
+        html = client.get(page).text
+        m = re.search(rf'/static/{re.escape(asset)}\?v=([0-9a-f]+)"', html)
+        assert m, f"{page} doesn't link a versioned {asset}"
+        assert m.group(1) == hashlib.sha256((static / asset).read_bytes()).hexdigest()[:12]
+        r = client.get(f"/static/{asset}?v={m.group(1)}")
+        assert r.status_code == 200 and r.content == (static / asset).read_bytes()
