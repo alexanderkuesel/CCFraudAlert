@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Alarm summary{% endblock %} · CC Transaction Alarms</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='1' y='1' width='14' height='14' rx='2' fill='%23c62828'/><text x='8' y='12.5' font-size='12' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>!</text></svg>">
-  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+  <link rel="stylesheet" href="{{ asset('style.css') }}">
 </head>
 <body>
 {% set p = request.url.path %}

@@ -1,5 +1,7 @@
+import hashlib
 import secrets
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
@@ -22,6 +24,17 @@ from fraudalert.web.filters import PRIORITIES, PRIORITY_RANK, STATES, VIEWS, Fil
 from fraudalert.rules.engine import FIELDS, OPS, RuleError, RuleSpec, describe, validate_rule
 
 HERE = Path(__file__).parent
+
+
+@lru_cache(maxsize=None)
+def _asset_version(path: str) -> str:
+    return hashlib.sha256((HERE / "static" / path).read_bytes()).hexdigest()[:12]
+
+
+def _asset_url(path: str) -> str:
+    """/static/<path>?v=<content hash>. The URL changes whenever the file does, so a browser never
+    pairs a new page with a stylesheet or script it cached from an older version."""
+    return f"/static/{path}?v={_asset_version(path)}"
 PAGE_SIZE = 50
 SEVERITIES = ["high", "medium", "low"]
 APP_NAME = "CC Transaction Alarm Dashboard"
@@ -126,6 +139,7 @@ def create_app(init: bool = True) -> FastAPI:
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.globals.update(describe=lambda r: describe(RuleSpec(r.id, r.name, r.match, r.conditions)))
+    templates.env.globals["asset"] = _asset_url
     templates.env.filters["local"] = _local
 
     def banner() -> dict:
